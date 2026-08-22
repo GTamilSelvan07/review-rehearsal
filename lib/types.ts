@@ -93,6 +93,19 @@ export interface MajorIssue {
   quoteVerified?: boolean;
 }
 
+export interface AuditFinding {
+  issue: string;
+  severity: "major" | "moderate" | "minor";
+  quote: string;
+  anchor: string;
+  quoteVerified?: boolean;
+}
+
+export interface SectionAudit {
+  section: string;
+  findings: AuditFinding[];
+}
+
 export interface Review {
   personaId: string;
   archetype: string;
@@ -108,6 +121,8 @@ export interface Review {
   committeeComments: string;
   /** false = adversarial advisory review, excluded from decision thresholds */
   counted?: boolean;
+  /** R5 only: exhaustive section-by-section scrutiny findings */
+  sectionAudit?: SectionAudit[];
 }
 
 export interface MetaReview {

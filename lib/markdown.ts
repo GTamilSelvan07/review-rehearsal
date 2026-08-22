@@ -85,6 +85,17 @@ export function buildMarkdown(state: RunState): string {
       r.revisions.forEach((q) => lines.push(`- ${q}`));
       lines.push("");
     }
+    if (r.sectionAudit?.length) {
+      lines.push(`### Section-by-section scrutiny`);
+      for (const sec of r.sectionAudit) {
+        lines.push(`**${sec.section}**`);
+        sec.findings.forEach((f) => {
+          lines.push(`- [${f.severity.toUpperCase()}] ${f.issue} (${f.anchor})`);
+          if (f.quote) lines.push(`  > "${f.quote}"`);
+        });
+        lines.push("");
+      }
+    }
   }
 
   if (state.meta) {

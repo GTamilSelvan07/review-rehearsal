@@ -250,6 +250,14 @@ function ReviewCard({ r }: { r: Review }) {
           ))}
         </ul>
       </div>
+      {r.sectionAudit && r.sectionAudit.length > 0 && (
+        <div style={{ fontSize: 12.5, color: "var(--soft)" }}>
+          <span className="pill navy">
+            Full scrutiny: {r.sectionAudit.reduce((n, s) => n + s.findings.length, 0)} findings across{" "}
+            {r.sectionAudit.length} sections
+          </span>
+        </div>
+      )}
       <div style={{ borderTop: "1px solid var(--panel)", paddingTop: 10, marginTop: "auto" }}>
         {r.criteria.map((c) => (
           <div key={c.name} style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: "var(--soft)", padding: "2px 0" }}>
@@ -301,6 +309,36 @@ function ReviewCard({ r }: { r: Review }) {
             <div>
               <div className="rsec">Required revisions</div>
               <ul className="tight">{r.revisions.map((m, i) => <li key={i}>{m}</li>)}</ul>
+            </div>
+          )}
+          {r.sectionAudit && r.sectionAudit.length > 0 && (
+            <div>
+              <div className="rsec">Section-by-section scrutiny</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                {r.sectionAudit.map((sec) => (
+                  <div key={sec.section} style={{ border: "1px solid var(--line)", borderRadius: 8, padding: "10px 12px" }}>
+                    <div style={{ fontWeight: 700, fontSize: 13, color: "var(--navy)", marginBottom: 6 }}>{sec.section}</div>
+                    {sec.findings.map((f, i) => (
+                      <div key={i} style={{ padding: "6px 0", borderTop: i > 0 ? "1px solid var(--panel)" : "none" }}>
+                        <div style={{ display: "flex", gap: 8, alignItems: "flex-start", flexWrap: "wrap" }}>
+                          <span className={`pill ${f.severity === "major" ? "fail" : f.severity === "moderate" ? "warn" : "neutral"}`}>
+                            {f.severity}
+                          </span>
+                          <span style={{ flex: 1, minWidth: 200 }}>{f.issue}</span>
+                        </div>
+                        {f.quote && (
+                          <div className="quote">
+                            “{f.quote}” — {f.anchor}
+                            {f.quoteVerified === false && (
+                              <span className="pill warn" style={{ marginLeft: 8 }}>quote not verified in text</span>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                ))}
+              </div>
             </div>
           )}
           <div>

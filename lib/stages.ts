@@ -9,6 +9,7 @@ import type {
   Guide,
   GuideAction,
   MajorIssue,
+  SectionAudit,
 } from "./types";
 import {
   ACM_CRITERIA,
@@ -181,7 +182,7 @@ const ARCHETYPES = [
   { id: "R2", archetype: "Methods expert", expertise: 4, counted: true, note: "statistician or qualitative-methods specialist matched to the paper's methods; interrogates rigor, analysis, claims-vs-data" },
   { id: "R3", archetype: "Adjacent-field senior", expertise: 2, counted: true, note: "broad HCI perspective, honest expertise 2-3; interrogates framing, importance, clarity for the wider CHI audience; writes the shortest review" },
   { id: "R4", archetype: "Practitioner lens", expertise: 3, counted: true, note: "applications and deployment perspective; interrogates real-world relevance, ethics of deployment, whether contribution justifies length" },
-  { id: "R5", archetype: "Devil's advocate", expertise: 4, counted: false, note: "senior adversarial reader invited to stress-test the paper: builds the strongest good-faith case AGAINST acceptance — confounds, alternative explanations for the results, overclaiming, threats to validity, missing baselines or comparisons, ethical gaps. Advisory only: this review is excluded from decision thresholds, so it can push as hard as the evidence honestly allows" },
+  { id: "R5", archetype: "Devil's advocate", expertise: 4, counted: false, note: "a senior HCI expert with 20+ years across the field's methods (quantitative, qualitative, systems, design), invited to stress-test the paper. Scrutinizes EVERY section exhaustively — claims-vs-evidence, validity threats, statistics, qualitative rigor, ethics, accessibility, reproducibility, figures, internal consistency — and builds the strongest good-faith case AGAINST acceptance. Advisory only: this review is excluded from decision thresholds, so it can push as hard as the evidence honestly allows" },
 ];
 
 export async function runPanel(state: RunState): Promise<Partial<RunState>> {
@@ -214,6 +215,60 @@ Return JSON: { "personas": [{ "id": "R1".."R5", "archetype": string, "background
 
 // -------------------------------------------------------------- S5: reviews
 
+/** The lenses R5 applies to every section — a senior HCI expert's full toolkit. */
+const SCRUTINY_CHECKLIST = `
+1. Claims-evidence alignment: cross-check every claim in the abstract and introduction against what the results actually show; flag any scope creep between them.
+2. Construct validity: do the measures actually capture the constructs claimed (e.g. is "engagement" really engagement, or just time-on-task)?
+3. Internal validity: confounds, order/learning effects, demand characteristics, experimenter bias, unfair or strawman baselines, novelty effects.
+4. Statistical validity: test choice vs data type, distributional assumptions, corrections for multiple comparisons, power for the stated N, effect sizes and confidence intervals, clusters of just-under-.05 p-values.
+5. Qualitative rigor: sampling and saturation rationale, codebook development and inter-coder process, researcher positionality, member checking, whether quotes look cherry-picked.
+6. External and ecological validity: who the sample is (students? WEIRD? one org?), setting realism, study duration vs the durability of claims, whether generalization matches the evidence.
+7. Novelty and related work: the nearest prior systems/studies and whether the delta is honestly characterized; missing comparison TOPICS or baseline TOPICS (name topics, never invent specific citations).
+8. Design and systems rigor: is the design rationale argued or asserted? Were alternatives considered? Is the technical evaluation adequate, or a cherry-picked demo?
+9. Ethics: consent (including bystanders and secondary users), deception, compensation, IRB/ethics review, risks to participants or affected groups, dual-use concerns.
+10. Accessibility and inclusion: who is excluded by the design, the study procedure, or the recruitment?
+11. Reproducibility and transparency: availability of materials/data/code/prompts, model versions and parameters for AI systems, exclusion criteria, preregistration.
+12. Figures and tables: truncated axes, missing error bars, figures that disagree with the numbers in the text.
+13. Internal consistency: Ns, percentages, and statistics that disagree between abstract, body, tables, and figures.
+14. Argument quality: circular reasoning, undefined key terms, implications sections that outrun the findings.`;
+
+async function runScrutinyAudit(state: RunState, persona: Persona): Promise<SectionAudit[]> {
+  const p = state.paper!;
+  const sectionList = [
+    "Abstract & Introduction",
+    ...p.sections.map((s) => s.title),
+    "Figures & Tables",
+    "References & related work coverage",
+  ];
+  const res = await genJSON<{ audit: SectionAudit[] }>({
+    system: SIM_NOTE,
+    thinking: "high",
+    maxOutputTokens: 48_000,
+    parts: [
+      ...paperParts(state),
+      {
+        text: `You are ${persona.id}, a senior HCI expert (${persona.background}) conducting an EXHAUSTIVE adversarial audit of this CHI 2027 submission before writing your review. Scrutinize every bit of it.
+
+Work through the paper section by section — cover ALL of these:
+${sectionList.map((s) => `- ${s}`).join("\n")}
+
+For each section, hunt for genuine problems using this checklist:
+${SCRUTINY_CHECKLIST}
+
+Rules:
+- Every finding needs a VERBATIM quote from the paper and an anchor like "§4.1, p.6". No unanchored findings.
+- Severity: "major" = could justify rejection on its own; "moderate" = must be fixed before acceptance; "minor" = worth fixing.
+- Report only REAL findings. A section with no genuine problems gets an empty findings list — padding destroys your credibility.
+- Do not report limitations the authors already state themselves: ${JSON.stringify(p.statedLimitations)}. Engaging one is allowed only as: the authors acknowledge X; the unexamined consequence is Y.
+- Never invent citations: name missing-literature TOPICS only.
+
+Return JSON: { "audit": [{ "section": string, "findings": [{ "issue": string, "severity": "major" | "moderate" | "minor", "quote": string, "anchor": string }] }] }`,
+      },
+    ],
+  });
+  return res.audit ?? [];
+}
+
 export async function runReviews(state: RunState): Promise<Partial<RunState>> {
   const limit = pLimit(4);
   const text = matchText(state);
@@ -225,16 +280,23 @@ export async function runReviews(state: RunState): Promise<Partial<RunState>> {
 
 async function reviewLoop(state: RunState, persona: Persona, matchableText: string): Promise<Review> {
   const p = state.paper!;
+  const adversarial = persona.counted === false;
+  const coverageLine = adversarial
+    ? `You scrutinize EVERY part of the paper exhaustively — abstract, every section, every figure, every statistic, the references. Nothing is out of scope for you.`
+    : `You go deep on: ${persona.focus.join("; ")}. You only skim other aspects — do NOT attempt exhaustive coverage; real reviewers don't.`;
   const personaBrief = `You are reviewer ${persona.id} for CHI 2027 — ${persona.archetype}.
 Background: ${persona.background}
 Your honest expertise self-rating for THIS paper: ${persona.expertise}/4.
-You go deep on: ${persona.focus.join("; ")}. You only skim other aspects — do NOT attempt exhaustive coverage; real reviewers don't.
+${coverageLine}
 Your writing style: ${persona.style}
 Your known bias (let it subtly shape emphasis, not fairness): ${persona.biases}${
-    persona.counted === false
-      ? `\nYou are the ADVERSARIAL fifth reader, invited by the AC to stress-test this paper. Your review is advisory — it does not count toward decision thresholds — so build the strongest good-faith case against acceptance: hunt for confounds, alternative explanations for every key result, overclaiming, threats to validity, missing baselines, and ethical gaps. Push as hard as the evidence honestly allows, but do NOT manufacture problems — every issue must still survive the fact-check against the paper.`
+    adversarial
+      ? `\nYou are the ADVERSARIAL fifth reader, a senior HCI expert invited by the AC to stress-test this paper. Your review is advisory — it does not count toward decision thresholds — so build the strongest good-faith case against acceptance: hunt for confounds, alternative explanations for every key result, overclaiming, threats to validity, missing baselines, and ethical gaps. Push as hard as the evidence honestly allows, but do NOT manufacture problems — every issue must still survive the fact-check against the paper.`
       : ""
   }`;
+
+  // R5 first performs an exhaustive section-by-section audit; the review is built on it.
+  const audit = adversarial ? await runScrutinyAudit(state, persona) : null;
 
   const formSpec = `Return JSON:
 {
@@ -249,12 +311,18 @@ Your known bias (let it subtly shape emphasis, not fairness): ${persona.biases}$
   "questions": string[],             // for the authors to answer in revision
   "revisions": string[],             // concrete, itemized required changes
   "recommendation": "A" | "ARR" | "RR" | "RRX" | "X",   // ${RECOMMENDATION_SCALE.map((r) => `${r.code}=${r.label}`).join("; ")}
-  "committeeComments": string        // candid, authors will not see this
+  "committeeComments": string${
+    adversarial
+      ? `,       // candid, authors will not see this
+  "sectionAudit": [{ "section": string, "findings": [{ "issue": string, "severity": "major" | "moderate" | "minor", "quote": string, "anchor": string }] }]   // your full section-by-section audit, cleaned up`
+      : `        // candid, authors will not see this`
+  }
 }`;
 
   const draft = await genJSON<Review>({
     system: SIM_NOTE,
     thinking: "high",
+    maxOutputTokens: adversarial ? 48_000 : 32_768,
     parts: [
       ...paperParts(state),
       {
@@ -265,7 +333,14 @@ ${REVIEW_ANATOMY}
 ${BASE_RATES}
 
 The authors' own stated limitations (do NOT present these as your discoveries): ${JSON.stringify(p.statedLimitations)}
-
+${
+  audit
+    ? `
+YOUR COMPLETED SECTION-BY-SECTION AUDIT (this is your factual basis — carry it into "sectionAudit", promote the most decision-relevant findings to numbered major issues, and fold the rest into minor issues; your review length may exceed one page given this depth):
+${JSON.stringify(audit)}
+`
+    : ""
+}
 ${formSpec}`,
       },
     ],
@@ -293,7 +368,11 @@ Fact-check rules — re-read the paper for each one:
 2. These issues cited quotes that do NOT appear verbatim in the paper: ${JSON.stringify(failedQuotes)}. Replace each with a real verbatim quote, or delete the issue if you cannot support it.
 3. Delete any criticism generic enough to fit any paper, and any criticism that merely restates the authors' own limitations: ${JSON.stringify(p.statedLimitations)}.
 4. Check score-text consistency: the recommendation must match the surviving criticisms' weight (${BASE_RATES.split("\n").slice(-1)[0]}). Adjust scores or recommendation if they diverge.
-5. Keep your persona's voice and format. Do not add new issues.
+5. Keep your persona's voice and format. Do not add new issues.${
+          adversarial
+            ? `\n6. Apply rules 1-3 to EVERY sectionAudit finding as well: delete findings the paper disproves, fix or replace unverifiable quotes, keep severities honest. Return the cleaned sectionAudit in full.`
+            : ""
+        }
 
 DRAFT:
 ${JSON.stringify(draft)}
@@ -308,6 +387,16 @@ ${formSpec}`,
     ...issue,
     quoteVerified: matchableText ? quoteAppearsIn(issue.quote ?? "", matchableText) : undefined,
   }));
+  if (adversarial) {
+    const cleaned: SectionAudit[] = (final.sectionAudit ?? audit ?? []).map((sec) => ({
+      section: sec.section,
+      findings: (sec.findings ?? []).map((f) => ({
+        ...f,
+        quoteVerified: matchableText ? quoteAppearsIn(f.quote ?? "", matchableText) : undefined,
+      })),
+    }));
+    final.sectionAudit = cleaned.filter((s) => s.findings.length > 0);
+  }
   final.personaId = persona.id;
   final.archetype = persona.archetype;
   final.expertise = persona.expertise;
