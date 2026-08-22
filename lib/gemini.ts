@@ -61,6 +61,10 @@ interface GenOpts {
   parts: PaperPart[];
   thinking?: "low" | "medium" | "high";
   maxOutputTokens?: number;
+  /** Plain JSON Schema enforced via responseJsonSchema (falls back gracefully). */
+  jsonSchema?: object;
+  /** "high" turns on media_resolution_high for dense PDF/figure parsing. */
+  media?: "high";
 }
 
 /**
@@ -84,8 +88,10 @@ export async function genJSON<T>(opts: GenOpts): Promise<T> {
 
 export async function genText(opts: GenOpts): Promise<string> {
   let useThinking = true;
+  let useSchema = true;
+  let useMedia = true;
   let lastErr: unknown = null;
-  for (let attempt = 0; attempt < 4; attempt++) {
+  for (let attempt = 0; attempt < 5; attempt++) {
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const config: any = {
@@ -95,6 +101,12 @@ export async function genText(opts: GenOpts): Promise<string> {
       if (opts.system) config.systemInstruction = opts.system;
       if (useThinking && opts.thinking) {
         config.thinkingConfig = { thinkingLevel: opts.thinking };
+      }
+      if (useSchema && opts.jsonSchema) {
+        config.responseJsonSchema = opts.jsonSchema;
+      }
+      if (useMedia && opts.media === "high") {
+        config.mediaResolution = "MEDIA_RESOLUTION_HIGH";
       }
       const res = await ai().models.generateContent({
         model: MODEL,
@@ -107,8 +119,17 @@ export async function genText(opts: GenOpts): Promise<string> {
     } catch (err: unknown) {
       lastErr = err;
       const msg = err instanceof Error ? err.message : String(err);
+      // Graceful degradation for API/SDK feature mismatches: drop the feature, keep the call.
       if (/thinking/i.test(msg) && useThinking) {
-        useThinking = false; // SDK/API mismatch on thinkingConfig — retry without it
+        useThinking = false;
+        continue;
+      }
+      if (/(json_?schema|response_?json|schema)/i.test(msg) && useSchema && opts.jsonSchema) {
+        useSchema = false; // fall back to prompt-described JSON
+        continue;
+      }
+      if (/media_?resolution/i.test(msg) && useMedia && opts.media) {
+        useMedia = false;
         continue;
       }
       if (/(429|RESOURCE_EXHAUSTED|500|503|UNAVAILABLE|fetch failed|ECONNRESET)/i.test(msg)) {

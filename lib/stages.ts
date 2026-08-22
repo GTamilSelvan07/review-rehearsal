@@ -25,9 +25,23 @@ import { parseBibtex, detex, makeBibtex } from "./bibtex";
 import { verifyReferences, searchReadingList } from "./refcheck";
 import { quoteAppearsIn } from "./similarity";
 import { unzipSync } from "fflate";
+import {
+  PAPER_SCHEMA,
+  DESK_REJECT_SCHEMA,
+  ADR_SCHEMA,
+  PERSONAS_SCHEMA,
+  SCRUTINY_SCHEMA,
+  reviewSchema,
+  META_SCHEMA,
+  GUIDE_SCHEMA,
+} from "./schemas";
 
 const SIM_NOTE =
   "You are part of an unofficial CHI 2027 review simulation that helps authors strengthen a draft before submission. Be as faithful to the real process as possible.";
+
+function mediaFor(state: RunState): "high" | undefined {
+  return state.kind === "pdf" ? "high" : undefined;
+}
 
 /** The text used for verbatim-quote verification. */
 function matchText(state: RunState): string {
@@ -85,6 +99,8 @@ export async function runIngest(state: RunState): Promise<Partial<RunState>> {
     system: SIM_NOTE,
     thinking: "low",
     maxOutputTokens: 60_000,
+    jsonSchema: PAPER_SCHEMA,
+    media: mediaFor(working),
     parts: [
       ...paperParts(working),
       {
@@ -119,6 +135,8 @@ export async function runDeskReject(state: RunState): Promise<Partial<RunState>>
   const result = await genJSON<DeskRejectResult>({
     system: SIM_NOTE,
     thinking: "medium",
+    jsonSchema: DESK_REJECT_SCHEMA,
+    media: mediaFor(state),
     parts: [
       ...paperParts(state),
       {
@@ -149,6 +167,8 @@ export async function runAdr(state: RunState): Promise<Partial<RunState>> {
   const adr = await genJSON<AdrReport>({
     system: SIM_NOTE,
     thinking: "high",
+    jsonSchema: ADR_SCHEMA,
+    media: mediaFor(state),
     parts: [
       ...paperParts(state),
       {
@@ -190,6 +210,7 @@ export async function runPanel(state: RunState): Promise<Partial<RunState>> {
   const personas = await genJSON<{ personas: Persona[] }>({
     system: SIM_NOTE,
     thinking: "medium",
+    jsonSchema: PERSONAS_SCHEMA,
     parts: [
       {
         text: `A CHI 2027 AC is selecting four external reviewers for this paper:
@@ -229,7 +250,7 @@ const SCRUTINY_CHECKLIST = `
 10. Accessibility and inclusion: who is excluded by the design, the study procedure, or the recruitment?
 11. Reproducibility and transparency: availability of materials/data/code/prompts, model versions and parameters for AI systems, exclusion criteria, preregistration.
 12. Figures and tables: truncated axes, missing error bars, figures that disagree with the numbers in the text.
-13. Internal consistency: Ns, percentages, and statistics that disagree between abstract, body, tables, and figures.
+13. Internal consistency: Ns, percentages, and statistics that disagree between abstract, body, tables, and figures. Recompute every derivable number (percentages from counts, degrees of freedom from N and design, totals across conditions) and flag any that do not reproduce.
 14. Argument quality: circular reasoning, undefined key terms, implications sections that outrun the findings.`;
 
 async function runScrutinyAudit(state: RunState, persona: Persona): Promise<SectionAudit[]> {
@@ -244,6 +265,8 @@ async function runScrutinyAudit(state: RunState, persona: Persona): Promise<Sect
     system: SIM_NOTE,
     thinking: "high",
     maxOutputTokens: 48_000,
+    jsonSchema: SCRUTINY_SCHEMA,
+    media: mediaFor(state),
     parts: [
       ...paperParts(state),
       {
@@ -323,6 +346,8 @@ Your known bias (let it subtly shape emphasis, not fairness): ${persona.biases}$
     system: SIM_NOTE,
     thinking: "high",
     maxOutputTokens: adversarial ? 48_000 : 32_768,
+    jsonSchema: reviewSchema(adversarial),
+    media: mediaFor(state),
     parts: [
       ...paperParts(state),
       {
@@ -356,6 +381,9 @@ ${formSpec}`,
   const final = await genJSON<Review>({
     system: SIM_NOTE,
     thinking: "high",
+    maxOutputTokens: adversarial ? 48_000 : 32_768,
+    jsonSchema: reviewSchema(adversarial),
+    media: mediaFor(state),
     parts: [
       ...paperParts(state),
       {
@@ -414,6 +442,7 @@ export async function runMeta(state: RunState): Promise<Partial<RunState>> {
   const meta = await genJSON<MetaReview>({
     system: SIM_NOTE,
     thinking: "high",
+    jsonSchema: META_SCHEMA,
     parts: [
       {
         text: `You are the 1AC for this CHI 2027 submission. The four external reviews are below (JSON).
@@ -454,6 +483,7 @@ export async function runGuide(state: RunState): Promise<Partial<RunState>> {
   const draft = await genJSON<GuideDraft>({
     system: SIM_NOTE,
     thinking: "high",
+    jsonSchema: GUIDE_SCHEMA,
     parts: [
       {
         text: `Convert this CHI 2027 review packet into a constructive strengthening guide for the AUTHORS. Voice: a coach, not a judge — every action is imperative and concrete ("Add a power analysis justifying N=24", never "the evaluation is weak").

@@ -86,7 +86,8 @@ export const REVIEW_ANATOMY = `Write roughly one page of text (CHI's reviewer gu
 4. Questions the authors should answer in a revision.
 5. Comments to the committee: 1-3 candid sentences the authors will not see.
 Never make a criticism that could apply to any paper. Never restate a limitation the authors already state themselves — if you engage one, frame it as: the authors acknowledge X; my concern is what X means for claim Y.
-Be direct and demanding — CHI reviews are. Hedged niceties help no one: the authors should finish your review knowing exactly what would make the committee reject this paper, and exactly what would save it. Praise only what is genuinely strong, and say why.`;
+Be direct and demanding — CHI reviews are. Hedged niceties help no one: the authors should finish your review knowing exactly what would make the committee reject this paper, and exactly what would save it. Praise only what is genuinely strong, and say why.
+Before writing anything, use your full reasoning budget: for each key result, silently enumerate the alternative explanations that could produce it (confound, artifact, selection, novelty effect, chance) and check whether the paper rules each out. Write a criticism only where it does not — and name the alternative explanation explicitly in your argument.`;
 
 // First-round decision rules, applied in code (not by the model).
 export function decideTrack(recs: string[]): "minor" | "major" | "reject" {
