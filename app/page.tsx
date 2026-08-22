@@ -138,13 +138,17 @@ export default function Home() {
         {phase === "upload" && (
           <div style={{ maxWidth: 720, margin: "0 auto", display: "flex", flexDirection: "column", gap: 20 }}>
             <div style={{ textAlign: "center", display: "flex", flexDirection: "column", gap: 12, marginTop: 24 }}>
-              <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", color: "var(--pen)" }}>
+              <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", color: "var(--brand)" }}>
                 CHI 2027 · Papers
               </div>
               <h1 style={{ fontSize: "clamp(30px, 5vw, 44px)" }}>Rehearse the review before the review.</h1>
               <p style={{ fontSize: 16, color: "var(--soft)", maxWidth: 560, margin: "0 auto" }}>
                 Your paper runs the real CHI 2027 gauntlet: desk-reject checks, a reference-authenticity audit, the
-                ADR rubric, four independent expert reviews, and a 1AC meta-review — ending in a guide to strengthen it.
+                ADR rubric, four independent expert reviews plus an adversarial fifth reader, and a 1AC meta-review
+                — ending in a guide to strengthen it.
+              </p>
+              <p style={{ fontSize: 14 }}>
+                <a href="/process">See how the real CHI 2027 review process works →</a>
               </p>
             </div>
 
@@ -162,12 +166,12 @@ export default function Home() {
                 addFiles(e.dataTransfer.files);
               }}
             >
-              <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="var(--slate)" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="var(--brand)" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
                 <path d="M12 16V5" />
                 <path d="M7.5 9.5L12 5l4.5 4.5" />
                 <path d="M4 16v3a1.5 1.5 0 0 0 1.5 1.5h13A1.5 1.5 0 0 0 20 19v-3" />
               </svg>
-              <div style={{ fontFamily: "Newsreader, Georgia, serif", fontSize: 20, fontWeight: 600 }}>
+              <div style={{ fontSize: 20, fontWeight: 600 }}>
                 {files.length ? `${files.length} file${files.length > 1 ? "s" : ""} ready` : "Drop your paper here"}
               </div>
               <div style={{ fontSize: 13.5, color: "var(--soft)" }}>
@@ -220,7 +224,7 @@ export default function Home() {
             <p style={{ fontSize: 13, color: "var(--soft)", textAlign: "center" }}>
               Processed once, deleted within 24 hours. Your paper is never used for training.
               <br />
-              <strong style={{ color: "var(--pen)" }}>{daysToDeadline()} days</strong> until the CHI 2027 submission
+              <strong style={{ color: "var(--brand-dark)" }}>{daysToDeadline()} days</strong> until the CHI 2027 submission
               deadline (September 10, 2026). A full run takes 4–6 minutes.
             </p>
           </div>

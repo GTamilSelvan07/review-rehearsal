@@ -55,7 +55,8 @@ export function buildMarkdown(state: RunState): string {
   }
 
   for (const r of state.reviews ?? []) {
-    lines.push(`## ${r.personaId} · ${r.archetype} — recommendation: ${r.recommendation} (expertise ${r.expertise}/4)`);
+    const advisory = r.counted === false ? " — ADVISORY (adversarial, not counted in the decision)" : "";
+    lines.push(`## ${r.personaId} · ${r.archetype} — recommendation: ${r.recommendation} (expertise ${r.expertise}/4)${advisory}`);
     lines.push("");
     lines.push(`**Summary.** ${r.summary}`);
     lines.push("");

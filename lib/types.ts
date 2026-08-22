@@ -79,6 +79,8 @@ export interface Persona {
   focus: string[];
   style: string;
   biases: string;
+  /** false = adversarial advisory reviewer, excluded from decision thresholds */
+  counted?: boolean;
 }
 
 export type Recommendation = "A" | "ARR" | "RR" | "RRX" | "X";
@@ -104,6 +106,8 @@ export interface Review {
   revisions: string[];
   recommendation: Recommendation;
   committeeComments: string;
+  /** false = adversarial advisory review, excluded from decision thresholds */
+  counted?: boolean;
 }
 
 export interface MetaReview {
@@ -170,8 +174,8 @@ export const STAGE_ORDER: { id: StageName; label: string; detail: string }[] = [
   { id: "deskreject", label: "Desk-reject screen", detail: "Anonymization, template, completeness" },
   { id: "refaudit", label: "Reference audit", detail: "Crossref · OpenAlex · Semantic Scholar · DBLP" },
   { id: "adr", label: "ADR assessment", detail: "Five ACM criteria, four flags, simulated AC decision" },
-  { id: "panel", label: "Reviewer matching", detail: "Four expert personas derived from the paper" },
-  { id: "reviews", label: "Four independent reviews", detail: "Draft → fact-check → sharpen, in parallel" },
+  { id: "panel", label: "Reviewer matching", detail: "Five expert personas derived from the paper" },
+  { id: "reviews", label: "Five independent reviews", detail: "Four counted + one adversarial · draft → fact-check → sharpen" },
   { id: "meta", label: "Meta-review & decision", detail: "1AC synthesis and decision track" },
   { id: "guide", label: "Strengthening guide", detail: "Prioritized fixes and a verified reading list" },
 ];

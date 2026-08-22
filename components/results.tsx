@@ -147,7 +147,7 @@ export function AdrView({ state }: { state: RunState }) {
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <div className={`banner ${advance ? "good" : "bad"}`}>
         <div>
-          <div style={{ fontFamily: "Newsreader, Georgia, serif", fontSize: 20, fontWeight: 600, color: advance ? "#1c5940" : "var(--pen)" }}>
+          <div style={{ fontSize: 20, fontWeight: 600, color: advance ? "#1c5940" : "var(--pen)" }}>
             {advance ? "Advance to full review" : "Assisted Desk Reject"}
           </div>
           <div style={{ fontSize: 13.5, color: "var(--soft)", marginTop: 2 }}>
@@ -189,7 +189,7 @@ export function AdrView({ state }: { state: RunState }) {
           ))}
           <div style={{ marginTop: 14 }}>
             <div className="cardlbl" style={{ marginBottom: 6 }}>Simulated AC note to authors</div>
-            <p style={{ fontFamily: "Newsreader, Georgia, serif", fontSize: 15.5, lineHeight: 1.55 }}>
+            <p style={{ fontSize: 15.5, lineHeight: 1.55 }}>
               “{adr.acNote}”
             </p>
           </div>
@@ -224,11 +224,18 @@ function ReviewCard({ r }: { r: Review }) {
         <div className="mono" style={{ fontSize: 12, color: "var(--soft)" }}>
           {r.personaId} · expertise {r.expertise}/4
         </div>
-        <div style={{ fontFamily: "Newsreader, Georgia, serif", fontSize: 18, fontWeight: 600 }}>{r.archetype}</div>
+        <div style={{ fontSize: 18, fontWeight: 600 }}>{r.archetype}</div>
       </div>
-      <span className={`pill ${recClass(r.recommendation)}`} style={{ alignSelf: "flex-start" }}>
-        {r.recommendation} — {rec?.label}
-      </span>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+        <span className={`pill ${recClass(r.recommendation)}`}>
+          {r.recommendation} — {rec?.label}
+        </span>
+        {r.counted === false && (
+          <span className="pill navy" title="Advisory only — excluded from the decision thresholds">
+            Adversarial · not counted
+          </span>
+        )}
+      </div>
       <div>
         <div className="rsec">Summary</div>
         <p style={{ fontSize: 13.5 }}>{r.summary}</p>
@@ -308,18 +315,25 @@ function ReviewCard({ r }: { r: Review }) {
 
 export function ReviewRoomView({ state }: { state: RunState }) {
   const reviews = state.reviews ?? [];
-  const positive = reviews.filter((r) => r.recommendation === "A" || r.recommendation === "ARR").length;
+  const counted = reviews.filter((r) => r.counted !== false);
+  const advisory = reviews.filter((r) => r.counted === false);
+  const positive = counted.filter((r) => r.recommendation === "A" || r.recommendation === "ARR").length;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <div className="card" style={{ padding: "14px 20px", display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
         <span className="cardlbl">Recommendation spread</span>
-        {reviews.map((r) => (
+        {counted.map((r) => (
           <span key={r.personaId} className={`pill ${recClass(r.recommendation)}`}>
             {r.personaId} · {r.recommendation}
           </span>
         ))}
+        {advisory.map((r) => (
+          <span key={r.personaId} className="pill navy" title="Adversarial reviewer — advisory only, not counted toward the decision">
+            {r.personaId} · {r.recommendation} (advisory)
+          </span>
+        ))}
         <span style={{ marginLeft: "auto", fontSize: 13.5, fontWeight: 600, color: positive >= 3 ? "var(--pass)" : "var(--soft)" }}>
-          {positive} of {reviews.length} at A/ARR {positive >= 3 ? "— meets the Minor Revisions threshold" : "— below the Minor Revisions threshold (3 needed)"}
+          {positive} of {counted.length} at A/ARR {positive >= 3 ? "— meets the Minor Revisions threshold" : "— below the Minor Revisions threshold (3 needed)"}
         </span>
       </div>
       <div className="review-grid">
@@ -329,6 +343,8 @@ export function ReviewRoomView({ state }: { state: RunState }) {
       </div>
       <p style={{ fontSize: 12.5, color: "var(--soft)", textAlign: "center" }}>
         Reviews are written independently — no reviewer saw another&apos;s review before the simulated discussion.
+        R5 is a deliberately adversarial reader: its review is advisory and excluded from the decision thresholds, so
+        the panel stays faithful to the real process while you still get the hardest possible critique.
       </p>
     </div>
   );
@@ -343,7 +359,7 @@ export function GuideView({ state }: { state: RunState }) {
   const total = guide?.actions.length ?? 0;
   const groups: ["track" | "criterion" | "polish", string, string][] = [
     ["track", "Changes your decision track", "var(--pen)"],
-    ["criterion", "Strengthens a criterion", "var(--slate)"],
+    ["criterion", "Strengthens a criterion", "var(--brand)"],
     ["polish", "Polish", "var(--soft)"],
   ];
   const toggle = (t: string) =>
@@ -366,13 +382,13 @@ export function GuideView({ state }: { state: RunState }) {
           </div>
           <div style={{ marginTop: 14 }}>
             <div className="cardlbl" style={{ marginBottom: 6 }}>1AC meta-review</div>
-            <p style={{ fontFamily: "Newsreader, Georgia, serif", fontSize: 15.5, lineHeight: 1.6, whiteSpace: "pre-line" }}>
+            <p style={{ fontSize: 15.5, lineHeight: 1.6, whiteSpace: "pre-line" }}>
               {meta.metaReview}
             </p>
           </div>
           {meta.discussion.length > 0 && (
             <details style={{ marginTop: 12 }}>
-              <summary style={{ cursor: "pointer", fontWeight: 600, color: "var(--slate)", fontSize: 13.5 }}>
+              <summary style={{ cursor: "pointer", fontWeight: 600, color: "var(--brand)", fontSize: 13.5 }}>
                 PCS discussion (simulated)
               </summary>
               <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 6 }}>

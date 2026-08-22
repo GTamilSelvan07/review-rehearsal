@@ -177,10 +177,11 @@ Return JSON: { "criteria": [{ "name", "score", "note", "evidence" }], "flags": [
 // ---------------------------------------------------------------- S4: panel
 
 const ARCHETYPES = [
-  { id: "R1", archetype: "Domain expert", expertise: 4, note: "knows this exact subfield's literature deeply; interrogates novelty and missing citations" },
-  { id: "R2", archetype: "Methods expert", expertise: 4, note: "statistician or qualitative-methods specialist matched to the paper's methods; interrogates rigor, analysis, claims-vs-data" },
-  { id: "R3", archetype: "Adjacent-field senior", expertise: 2, note: "broad HCI perspective, honest expertise 2-3; interrogates framing, importance, clarity for the wider CHI audience; writes the shortest review" },
-  { id: "R4", archetype: "Practitioner lens", expertise: 3, note: "applications and deployment perspective; interrogates real-world relevance, ethics of deployment, whether contribution justifies length" },
+  { id: "R1", archetype: "Domain expert", expertise: 4, counted: true, note: "knows this exact subfield's literature deeply; interrogates novelty and missing citations" },
+  { id: "R2", archetype: "Methods expert", expertise: 4, counted: true, note: "statistician or qualitative-methods specialist matched to the paper's methods; interrogates rigor, analysis, claims-vs-data" },
+  { id: "R3", archetype: "Adjacent-field senior", expertise: 2, counted: true, note: "broad HCI perspective, honest expertise 2-3; interrogates framing, importance, clarity for the wider CHI audience; writes the shortest review" },
+  { id: "R4", archetype: "Practitioner lens", expertise: 3, counted: true, note: "applications and deployment perspective; interrogates real-world relevance, ethics of deployment, whether contribution justifies length" },
+  { id: "R5", archetype: "Devil's advocate", expertise: 4, counted: false, note: "senior adversarial reader invited to stress-test the paper: builds the strongest good-faith case AGAINST acceptance — confounds, alternative explanations for the results, overclaiming, threats to validity, missing baselines or comparisons, ethical gaps. Advisory only: this review is excluded from decision thresholds, so it can push as hard as the evidence honestly allows" },
 ];
 
 export async function runPanel(state: RunState): Promise<Partial<RunState>> {
@@ -196,16 +197,19 @@ Abstract: ${p.abstract}
 Subcommunity: ${p.subcommunity}
 Methods: ${p.methods.join("; ")}
 
-Create four INVENTED reviewer personas (no real researchers' names or identifiable affiliations — describe them by research profile only), one per slot:
+Create five INVENTED reviewer personas (no real researchers' names or identifiable affiliations — describe them by research profile only), one per slot:
 ${ARCHETYPES.map((a) => `- ${a.id} · ${a.archetype} (expertise ${a.expertise}/4): ${a.note}`).join("\n")}
 
 For each, make the profile SPECIFIC to this paper's topics and methods. Give each a distinct reviewing style (e.g. numbered lists vs flowing prose; terse vs thorough) and one realistic bias or hobbyhorse.
 
-Return JSON: { "personas": [{ "id": "R1".."R4", "archetype": string, "background": string, "expertise": number, "focus": string[], "style": string, "biases": string }] }`,
+Return JSON: { "personas": [{ "id": "R1".."R5", "archetype": string, "background": string, "expertise": number, "focus": string[], "style": string, "biases": string }] }`,
       },
     ],
   });
-  return { personas: personas.personas };
+  const countedById = new Map(ARCHETYPES.map((a) => [a.id, a.counted]));
+  return {
+    personas: personas.personas.map((p) => ({ ...p, counted: countedById.get(p.id) ?? true })),
+  };
 }
 
 // -------------------------------------------------------------- S5: reviews
@@ -226,7 +230,11 @@ Background: ${persona.background}
 Your honest expertise self-rating for THIS paper: ${persona.expertise}/4.
 You go deep on: ${persona.focus.join("; ")}. You only skim other aspects — do NOT attempt exhaustive coverage; real reviewers don't.
 Your writing style: ${persona.style}
-Your known bias (let it subtly shape emphasis, not fairness): ${persona.biases}`;
+Your known bias (let it subtly shape emphasis, not fairness): ${persona.biases}${
+    persona.counted === false
+      ? `\nYou are the ADVERSARIAL fifth reader, invited by the AC to stress-test this paper. Your review is advisory — it does not count toward decision thresholds — so build the strongest good-faith case against acceptance: hunt for confounds, alternative explanations for every key result, overclaiming, threats to validity, missing baselines, and ethical gaps. Push as hard as the evidence honestly allows, but do NOT manufacture problems — every issue must still survive the fact-check against the paper.`
+      : ""
+  }`;
 
   const formSpec = `Return JSON:
 {
@@ -303,6 +311,7 @@ ${formSpec}`,
   final.personaId = persona.id;
   final.archetype = persona.archetype;
   final.expertise = persona.expertise;
+  final.counted = persona.counted !== false;
   return final;
 }
 
@@ -310,7 +319,9 @@ ${formSpec}`,
 
 export async function runMeta(state: RunState): Promise<Partial<RunState>> {
   const reviews = state.reviews ?? [];
-  const decision = decideTrack(reviews.map((r) => r.recommendation));
+  const counted = reviews.filter((r) => r.counted !== false);
+  const advisory = reviews.filter((r) => r.counted === false);
+  const decision = decideTrack(counted.map((r) => r.recommendation));
   const meta = await genJSON<MetaReview>({
     system: SIM_NOTE,
     thinking: "high",
@@ -321,14 +332,17 @@ export async function runMeta(state: RunState): Promise<Partial<RunState>> {
 Paper: ${state.paper?.title}
 Abstract: ${state.paper?.abstract}
 
-REVIEWS:
-${JSON.stringify(reviews.map(({ committeeComments, ...r }) => ({ ...r, committeeComments })))}
+REVIEWS (count toward the decision):
+${JSON.stringify(counted.map(({ committeeComments, ...r }) => ({ ...r, committeeComments })))}
 
-The decision was computed from CHI 2027's threshold rules and is FIXED: "${decision}" (minor = 3+ reviews at A/ARR; major = majority positive; reject otherwise). Do not change it.
+ADVISORY adversarial review (R5, does NOT count toward thresholds — weigh its concerns on their merits and mention any decisive one in the meta-review):
+${JSON.stringify(advisory.map(({ committeeComments, ...r }) => ({ ...r, committeeComments })))}
+
+The decision was computed from CHI 2027's threshold rules over the four counted reviews and is FIXED: "${decision}" (minor = 3+ reviews at A/ARR; major = majority positive; reject otherwise). Do not change it.
 
 Return JSON:
 {
-  "discussion": [{ "speaker": "1AC" | "R1" | "R2" | "R3" | "R4", "text": string }],   // a brief simulated PCS exchange (4-8 turns) resolving the biggest disagreement between reviewers
+  "discussion": [{ "speaker": "1AC" | "R1" | "R2" | "R3" | "R4" | "R5", "text": string }],   // a brief simulated PCS exchange (4-8 turns) resolving the biggest disagreement between reviewers
   "metaReview": string,        // the 1AC meta-review: synthesize the reviews, reference reviewers by number ("R2 raises..."), state what must change; ~200-300 words
   "decision": "${decision}",
   "decisionRationale": string  // 1-2 sentences tying the decision to the recommendation spread

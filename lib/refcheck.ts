@@ -1,5 +1,5 @@
 import type { RefEntry, RefVerdict, RefAudit } from "./types";
-import { diceSimilarity } from "./similarity";
+import { diceSimilarity, normalizeTitle } from "./similarity";
 import { makeBibtex } from "./bibtex";
 import { pLimit } from "./gemini";
 
@@ -16,142 +16,225 @@ interface Candidate {
   source: string;
 }
 
+interface SearchResult {
+  cands: Candidate[];
+  ok: boolean; // false = the service failed (throttled/down), not "no results"
+}
+
 function mailto(): string {
   return process.env.CONTACT_EMAIL || "review-rehearsal@example.com";
 }
 
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+// Per-host concurrency gates so a burst of references never stampedes one API.
+const gates = {
+  crossref: pLimit(2),
+  openalex: pLimit(2),
+  semanticscholar: pLimit(1),
+  dblp: pLimit(2),
+};
+
+/** Fetch JSON with timeout + retries on 429/5xx/timeouts. Throws on final failure. */
 async function getJSON(url: string, headers: Record<string, string> = {}): Promise<unknown> {
-  const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), 9000);
-  try {
-    const res = await fetch(url, {
-      headers: { "User-Agent": `ReviewRehearsal/0.1 (mailto:${mailto()})`, ...headers },
-      signal: ctrl.signal,
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    return await res.json();
-  } finally {
-    clearTimeout(t);
+  let lastErr: unknown = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 15_000);
+    try {
+      const res = await fetch(url, {
+        headers: { "User-Agent": `ReviewRehearsal/0.1 (mailto:${mailto()})`, ...headers },
+        signal: ctrl.signal,
+      });
+      if (res.status === 429 || res.status >= 500) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) throw Object.assign(new Error(`HTTP ${res.status}`), { fatal: true });
+      return await res.json();
+    } catch (err) {
+      lastErr = err;
+      if ((err as { fatal?: boolean }).fatal) throw err;
+      await sleep(1200 * Math.pow(2, attempt) + Math.random() * 500);
+    } finally {
+      clearTimeout(t);
+    }
   }
+  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
 }
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-async function crossrefByDoi(doi: string): Promise<Candidate | null> {
-  try {
-    const data: any = await getJSON(`https://api.crossref.org/works/${encodeURIComponent(doi)}?mailto=${encodeURIComponent(mailto())}`);
-    const w = data?.message;
-    if (!w) return null;
-    return candidateFromCrossref(w);
-  } catch {
-    return null;
-  }
-}
-
 function candidateFromCrossref(w: any): Candidate {
   return {
-    title: Array.isArray(w.title) ? w.title[0] ?? "" : String(w.title ?? ""),
+    title: Array.isArray(w.title) ? (w.title[0] ?? "") : String(w.title ?? ""),
     year: w.issued?.["date-parts"]?.[0]?.[0] ?? null,
     doi: w.DOI ?? null,
-    venue: Array.isArray(w["container-title"]) ? w["container-title"][0] ?? null : null,
+    venue: Array.isArray(w["container-title"]) ? (w["container-title"][0] ?? null) : null,
     authors: (w.author ?? []).map((a: any) => [a.given, a.family].filter(Boolean).join(" ")),
     url: w.URL ?? (w.DOI ? `https://doi.org/${w.DOI}` : null),
     source: "crossref",
   };
 }
 
-async function searchCrossref(q: string): Promise<Candidate[]> {
+async function crossrefByDoi(doi: string): Promise<Candidate | null> {
   try {
-    const data: any = await getJSON(
-      `https://api.crossref.org/works?query.bibliographic=${encodeURIComponent(q)}&rows=3&mailto=${encodeURIComponent(mailto())}`
+    const data: any = await gates.crossref(() =>
+      getJSON(`https://api.crossref.org/works/${encodeURIComponent(doi)}?mailto=${encodeURIComponent(mailto())}`)
     );
-    return (data?.message?.items ?? []).map(candidateFromCrossref);
+    return data?.message ? candidateFromCrossref(data.message) : null;
   } catch {
-    return [];
+    return null;
   }
 }
 
-async function searchOpenAlex(q: string): Promise<Candidate[]> {
+async function searchCrossref(q: string): Promise<SearchResult> {
   try {
-    const data: any = await getJSON(
-      `https://api.openalex.org/works?search=${encodeURIComponent(q)}&per-page=3&mailto=${encodeURIComponent(mailto())}`
+    const data: any = await gates.crossref(() =>
+      getJSON(
+        `https://api.crossref.org/works?query.bibliographic=${encodeURIComponent(q)}&rows=5&select=title,author,issued,DOI,container-title,URL&mailto=${encodeURIComponent(mailto())}`
+      )
     );
-    return (data?.results ?? []).map((w: any) => ({
-      title: w.display_name ?? "",
-      year: w.publication_year ?? null,
-      doi: w.doi ? String(w.doi).replace(/^https?:\/\/doi\.org\//, "") : null,
-      venue: w.primary_location?.source?.display_name ?? null,
-      authors: (w.authorships ?? []).map((a: any) => a.author?.display_name).filter(Boolean),
-      url: w.doi ?? w.id ?? null,
-      source: "openalex",
-    }));
+    return { cands: (data?.message?.items ?? []).map(candidateFromCrossref), ok: true };
   } catch {
-    return [];
+    return { cands: [], ok: false };
   }
 }
 
-async function searchSemanticScholar(q: string): Promise<Candidate[]> {
+async function searchOpenAlex(q: string): Promise<SearchResult> {
   try {
-    const data: any = await getJSON(
-      `https://api.semanticscholar.org/graph/v1/paper/search?query=${encodeURIComponent(q)}&limit=3&fields=title,year,venue,externalIds,url,authors`
+    const data: any = await gates.openalex(() =>
+      getJSON(`https://api.openalex.org/works?search=${encodeURIComponent(q)}&per-page=5&mailto=${encodeURIComponent(mailto())}`)
     );
-    return (data?.data ?? []).map((w: any) => ({
-      title: w.title ?? "",
-      year: w.year ?? null,
-      doi: w.externalIds?.DOI ?? null,
-      venue: w.venue ?? null,
-      authors: (w.authors ?? []).map((a: any) => a.name).filter(Boolean),
-      url: w.url ?? null,
-      source: "semanticscholar",
-    }));
+    return {
+      ok: true,
+      cands: (data?.results ?? []).map((w: any) => ({
+        title: w.display_name ?? "",
+        year: w.publication_year ?? null,
+        doi: w.doi ? String(w.doi).replace(/^https?:\/\/doi\.org\//, "") : null,
+        venue: w.primary_location?.source?.display_name ?? null,
+        authors: (w.authorships ?? []).map((a: any) => a.author?.display_name).filter(Boolean),
+        url: w.doi ?? w.id ?? null,
+        source: "openalex",
+      })),
+    };
   } catch {
-    return [];
+    return { cands: [], ok: false };
   }
 }
 
-async function searchDblp(q: string): Promise<Candidate[]> {
+async function searchSemanticScholar(q: string): Promise<SearchResult> {
+  const headers: Record<string, string> = {};
+  if (process.env.SEMANTIC_SCHOLAR_API_KEY) headers["x-api-key"] = process.env.SEMANTIC_SCHOLAR_API_KEY;
   try {
-    const data: any = await getJSON(
-      `https://dblp.org/search/publ/api?q=${encodeURIComponent(q)}&format=json&h=3`
+    const data: any = await gates.semanticscholar(async () => {
+      const out = await getJSON(
+        `https://api.semanticscholar.org/graph/v1/paper/search?query=${encodeURIComponent(q)}&limit=5&fields=title,year,venue,externalIds,url,authors`,
+        headers
+      );
+      await sleep(1100); // stay under the shared unauthenticated rate limit
+      return out;
+    });
+    return {
+      ok: true,
+      cands: (data?.data ?? []).map((w: any) => ({
+        title: w.title ?? "",
+        year: w.year ?? null,
+        doi: w.externalIds?.DOI ?? null,
+        venue: w.venue ?? null,
+        authors: (w.authors ?? []).map((a: any) => a.name).filter(Boolean),
+        url: w.url ?? null,
+        source: "semanticscholar",
+      })),
+    };
+  } catch {
+    return { cands: [], ok: false };
+  }
+}
+
+async function searchDblp(q: string): Promise<SearchResult> {
+  try {
+    const data: any = await gates.dblp(() =>
+      getJSON(`https://dblp.org/search/publ/api?q=${encodeURIComponent(q)}&format=json&h=5`)
     );
     const hits = data?.result?.hits?.hit ?? [];
-    return hits.map((h: any) => {
-      const info = h.info ?? {};
-      const authorField = info.authors?.author;
-      const authors = Array.isArray(authorField)
-        ? authorField.map((a: any) => (typeof a === "string" ? a : a.text)).filter(Boolean)
-        : authorField
-          ? [typeof authorField === "string" ? authorField : authorField.text]
-          : [];
-      return {
-        title: String(info.title ?? "").replace(/\.$/, ""),
-        year: info.year ? parseInt(info.year, 10) : null,
-        doi: info.doi ?? null,
-        venue: info.venue ?? null,
-        authors,
-        url: info.ee ?? info.url ?? null,
-        source: "dblp",
-      };
-    });
+    return {
+      ok: true,
+      cands: hits.map((h: any) => {
+        const info = h.info ?? {};
+        const authorField = info.authors?.author;
+        const authors = Array.isArray(authorField)
+          ? authorField.map((a: any) => (typeof a === "string" ? a : a.text)).filter(Boolean)
+          : authorField
+            ? [typeof authorField === "string" ? authorField : authorField.text]
+            : [];
+        return {
+          title: String(info.title ?? "").replace(/\.$/, ""),
+          year: info.year ? parseInt(info.year, 10) : null,
+          doi: info.doi ?? null,
+          venue: info.venue ?? null,
+          authors,
+          url: info.ee ?? info.url ?? null,
+          source: "dblp",
+        };
+      }),
+    };
   } catch {
-    return [];
+    return { cands: [], ok: false };
   }
 }
 
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
-function lastNameMatches(refAuthors: string[], candAuthors: string[]): boolean {
-  if (!refAuthors.length || !candAuthors.length) return true; // nothing to compare
-  const last = (n: string) => {
-    if (n.includes(",")) return n.split(",")[0].trim().toLowerCase();
-    const parts = n.trim().split(/\s+/);
-    return (parts[parts.length - 1] ?? "").toLowerCase();
-  };
-  const refFirst = last(refAuthors[0]);
-  return candAuthors.some((c) => last(c) === refFirst);
+/** Title similarity with a containment boost (handles subtitle truncation). */
+function titleScore(refTitle: string, candTitle: string): number {
+  let s = diceSimilarity(refTitle, candTitle);
+  const a = normalizeTitle(refTitle);
+  const b = normalizeTitle(candTitle);
+  if (a && b) {
+    if (a === b) return 1;
+    const [shorter, longer] = a.length <= b.length ? [a, b] : [b, a];
+    if (longer.includes(shorter) && shorter.length >= 0.5 * longer.length) s = Math.max(s, 0.95);
+  }
+  return s;
 }
 
-async function verifyOne(ref: RefEntry): Promise<RefVerdict> {
+function lastName(n: string): string {
+  if (n.includes(",")) return n.split(",")[0].trim().toLowerCase();
+  const parts = n.trim().split(/\s+/);
+  return (parts[parts.length - 1] ?? "").toLowerCase();
+}
+
+function authorsCorroborate(refAuthors: string[], candAuthors: string[]): boolean | null {
+  if (!refAuthors.length || !candAuthors.length) return null; // nothing to compare
+  const wanted = lastName(refAuthors[0]);
+  if (!wanted) return null;
+  return candAuthors.some((c) => lastName(c) === wanted);
+}
+
+function isShortTitle(title: string): boolean {
+  const n = normalizeTitle(title);
+  return n.length < 16 || n.split(" ").length <= 3;
+}
+
+async function runSearches(ref: RefEntry, titleOnly: boolean): Promise<{ best: { cand: Candidate; score: number } | null; okCount: number }> {
+  const surname = ref.authors[0] ? lastName(ref.authors[0]) : "";
+  const query = titleOnly
+    ? ref.title.slice(0, 250)
+    : `${ref.title} ${surname}${ref.year ? ` ${ref.year}` : ""}`.slice(0, 250);
+
+  let best: { cand: Candidate; score: number } | null = null;
+  let okCount = 0;
+  for (const search of [searchCrossref, searchOpenAlex, searchSemanticScholar, searchDblp]) {
+    const { cands, ok } = await search(query);
+    if (ok) okCount++;
+    for (const cand of cands) {
+      const score = titleScore(ref.title, cand.title);
+      if (!best || score > best.score) best = { cand, score };
+    }
+    if (best && best.score >= VERIFY_THRESHOLD && okCount >= 1) break;
+  }
+  return { best, okCount };
+}
+
+async function verifyOne(ref: RefEntry, titleOnly = false): Promise<RefVerdict> {
   const base: Omit<RefVerdict, "status" | "score" | "notes"> = {
     key: ref.key,
     raw: ref.raw,
@@ -164,16 +247,12 @@ async function verifyOne(ref: RefEntry): Promise<RefVerdict> {
     correctedBibtex: null,
   };
 
-  let networkFailures = 0;
-
   // DOI first: authoritative.
-  if (ref.doi) {
+  if (ref.doi && !titleOnly) {
     const cand = await crossrefByDoi(ref.doi);
     if (cand) {
-      const score = diceSimilarity(ref.title, cand.title);
-      if (score >= CANDIDATE_THRESHOLD) {
-        return judge(ref, cand, score, base);
-      }
+      const score = titleScore(ref.title, cand.title);
+      if (score >= CANDIDATE_THRESHOLD) return judge(ref, cand, score, base);
       return {
         ...base,
         source: "crossref",
@@ -187,30 +266,21 @@ async function verifyOne(ref: RefEntry): Promise<RefVerdict> {
         correctedBibtex: null,
       };
     }
-    networkFailures++;
   }
 
-  const query = `${ref.title} ${ref.authors[0] ?? ""}`.trim();
-  let best: { cand: Candidate; score: number } | null = null;
-
-  for (const search of [searchCrossref, searchOpenAlex, searchSemanticScholar, searchDblp]) {
-    const cands = await search(query);
-    if (!cands.length) networkFailures++;
-    for (const cand of cands) {
-      const score = diceSimilarity(ref.title, cand.title);
-      if (!best || score > best.score) best = { cand, score };
-    }
-    if (best && best.score >= VERIFY_THRESHOLD) break; // good enough, stop early
-  }
+  const { best, okCount } = await runSearches(ref, titleOnly);
 
   if (best && best.score >= CANDIDATE_THRESHOLD) {
     return judge(ref, best.cand, best.score, base);
   }
-
-  if (networkFailures >= 4 && !best) {
-    return { ...base, status: "skipped", score: 0, notes: "Lookup services were unreachable — could not check this reference." };
+  if (okCount < 2) {
+    return {
+      ...base,
+      status: "skipped",
+      score: best?.score ?? 0,
+      notes: "Lookup services were rate-limiting or unreachable — this reference could not be reliably checked (it is NOT necessarily wrong).",
+    };
   }
-
   return {
     ...base,
     status: "not_found",
@@ -226,7 +296,7 @@ function judge(
   base: Omit<RefVerdict, "status" | "score" | "notes">
 ): RefVerdict {
   const yearOk = ref.year === null || cand.year === null || Math.abs(ref.year - cand.year) <= 1;
-  const authorsOk = lastNameMatches(ref.authors, cand.authors);
+  const authorMatch = authorsCorroborate(ref.authors, cand.authors);
   const matched = {
     source: cand.source,
     matchedTitle: cand.title,
@@ -234,12 +304,19 @@ function judge(
     matchedDoi: cand.doi,
     matchedVenue: cand.venue,
   };
-  if (score >= VERIFY_THRESHOLD && yearOk && authorsOk) {
+
+  // Short, generic titles ("Common ground") need author corroboration, not just a title hit.
+  const short = isShortTitle(ref.title);
+  const corroborated = short ? authorMatch === true && ref.year !== null && yearOk : authorMatch !== false;
+
+  if (score >= VERIFY_THRESHOLD && yearOk && corroborated) {
     return { ...base, ...matched, status: "verified", score, notes: null, correctedBibtex: null };
   }
+
   const problems: string[] = [];
   if (!yearOk) problems.push(`published ${cand.year}, your entry says ${ref.year}`);
-  if (!authorsOk) problems.push("first author differs from the matched record");
+  if (authorMatch === false) problems.push("first author differs from the matched record");
+  if (short && authorMatch !== true) problems.push("title is too generic to verify without an author match");
   if (score < VERIFY_THRESHOLD) problems.push("title differs from the matched record");
   return {
     ...base,
@@ -258,9 +335,28 @@ function judge(
   };
 }
 
+const RANK: Record<RefVerdict["status"], number> = { verified: 3, mismatch: 2, not_found: 1, skipped: 0 };
+
 export async function verifyReferences(refs: RefEntry[]): Promise<RefAudit> {
-  const limit = pLimit(5);
-  const verdicts = await Promise.all(refs.map((r) => limit(() => verifyOne(r))));
+  const limit = pLimit(4);
+  let verdicts = await Promise.all(refs.map((r) => limit(() => verifyOne(r))));
+
+  // Second-chance pass for anything unresolved: cool down, retry with a
+  // title-only query (author strings from PDF extraction are sometimes noisy).
+  const retryIdx = verdicts
+    .map((v, i) => ({ v, i }))
+    .filter(({ v }) => v.status === "not_found" || v.status === "skipped")
+    .map(({ i }) => i);
+  if (retryIdx.length) {
+    await sleep(4000);
+    const retries = await Promise.all(retryIdx.map((i) => limit(() => verifyOne(refs[i], true))));
+    verdicts = verdicts.map((v, i) => {
+      const j = retryIdx.indexOf(i);
+      if (j === -1) return v;
+      return RANK[retries[j].status] > RANK[v.status] ? retries[j] : v;
+    });
+  }
+
   const summary = {
     total: verdicts.length,
     verified: verdicts.filter((v) => v.status === "verified").length,
@@ -273,12 +369,12 @@ export async function verifyReferences(refs: RefEntry[]): Promise<RefAudit> {
 
 /** Search real papers for the strengthening guide's reading list. */
 export async function searchReadingList(queries: string[]): Promise<Candidate[]> {
-  const limit = pLimit(3);
+  const limit = pLimit(2);
   const results = await Promise.all(
     queries.slice(0, 5).map((q) =>
       limit(async () => {
         const [oa, s2] = await Promise.all([searchOpenAlex(q), searchSemanticScholar(q)]);
-        return [...oa.slice(0, 2), ...s2.slice(0, 2)];
+        return [...oa.cands.slice(0, 2), ...s2.cands.slice(0, 2)];
       })
     )
   );
