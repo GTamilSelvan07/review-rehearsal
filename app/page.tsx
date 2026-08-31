@@ -4,14 +4,13 @@ import { useRef, useState } from "react";
 import { upload } from "@vercel/blob/client";
 import type { RunState, StageName, GateName } from "@/lib/types";
 import { STAGE_ORDER } from "@/lib/types";
-import { SUBCOMMUNITIES, MATCH_KEYWORDS_TARGET } from "@/lib/chi2027";
 import { buildMarkdown } from "@/lib/markdown";
 import { TopBar, Ribbon, type AppStep } from "@/components/chrome";
-import { RefAuditView, ScreeningView, AdrView, ReviewRoomView, GuideView } from "@/components/results";
+import { RefAuditView, ScreeningView, AdrView, ReviewRoomView, GuideView, PcsKeywordsView, ChecklistView } from "@/components/results";
 
 type StageStatus = "queued" | "active" | "done" | "failed" | "skipped";
 type Phase = "upload" | "running" | "results";
-type Tab = "screen" | "refs" | "adr" | "reviews" | "guide";
+type Tab = "checklist" | "screen" | "refs" | "adr" | "reviews" | "guide";
 
 const DEADLINE = new Date("2026-09-10T23:59:00Z");
 const stageIndex = (id: StageName) => STAGE_ORDER.findIndex((s) => s.id === id);
@@ -23,7 +22,6 @@ function daysToDeadline(): number {
 export default function Home() {
   const [phase, setPhase] = useState<Phase>("upload");
   const [files, setFiles] = useState<File[]>([]);
-  const [subcommunity, setSubcommunity] = useState<string>(SUBCOMMUNITIES[0]);
   const [drag, setDrag] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [statuses, setStatuses] = useState<Record<string, StageStatus>>({});
@@ -130,7 +128,6 @@ export default function Home() {
         runId: `rr-${Math.random().toString(36).slice(2, 7)}`,
         kind: files.some((f) => /\.tex$/i.test(f.name)) ? "latex" : "pdf",
         files: uploaded,
-        subcommunityHint: subcommunity,
       };
       commit(initial);
       await runFrom(initial, 0);
@@ -256,17 +253,14 @@ export default function Home() {
               />
             </div>
 
-            <div style={{ display: "flex", gap: 14, flexWrap: "wrap", justifyContent: "center" }}>
-              <select className="select" value={subcommunity} onChange={(e) => setSubcommunity(e.target.value)} aria-label="Subcommunity">
-                {SUBCOMMUNITIES.map((s) => (
-                  <option key={s} value={s}>
-                    {s}
-                  </option>
-                ))}
-              </select>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8, alignItems: "center" }}>
               <button className="btn primary" disabled={!files.length} onClick={run}>
                 Run the rehearsal
               </button>
+              <span style={{ fontSize: 12.5, color: "var(--soft)" }}>
+                Nothing else to pick: CHI 2027 has no subcommittees — reviewers are matched by keywords, which the
+                rehearsal suggests for you.
+              </span>
             </div>
 
             {error && <p style={{ color: "var(--pen)", textAlign: "center", fontWeight: 600 }}>{error}</p>}
@@ -343,19 +337,6 @@ export default function Home() {
                   {state.paper?.subcommunity} · {state.paper?.pages} pages · ≈{state.paper?.words.toLocaleString()} words ·{" "}
                   {state.paper?.references.length} references
                 </p>
-                {state.paper?.keywords && state.paper.keywords.length > 0 && (
-                  <div style={{ marginTop: 10, display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
-                    <span
-                      className="cardlbl"
-                      title={`CHI's matching tool suggests reviewers from author-supplied expertise descriptors — about ${MATCH_KEYWORDS_TARGET} per profile works best, and rarer descriptors weigh more.`}
-                    >
-                      Descriptors for PCS matching
-                    </span>
-                    {state.paper.keywords.map((k) => (
-                      <span key={k} className="kw">{k}</span>
-                    ))}
-                  </div>
-                )}
               </div>
               <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
                 <button className="btn ghost small" onClick={exportMarkdown}>
@@ -370,6 +351,8 @@ export default function Home() {
               </div>
             </div>
 
+            {state.paper && <PcsKeywordsView paper={state.paper} />}
+
             {stopNote && (
               <div className="banner bad" style={{ marginTop: 16 }}>
                 <p style={{ fontWeight: 600, color: "var(--pen)" }}>{stopNote}</p>
@@ -377,6 +360,11 @@ export default function Home() {
             )}
 
             <div className="tabs">
+              {state.paper && (
+                <button className={`tab ${tab === "checklist" ? "on" : ""}`} onClick={() => setTab("checklist")}>
+                  Submission checklist
+                </button>
+              )}
               {state.deskReject && (
                 <button className={`tab ${tab === "screen" ? "on" : ""}`} onClick={() => setTab("screen")}>
                   Screening{state.deskReject.passed ? "" : " ✗"}
@@ -404,6 +392,7 @@ export default function Home() {
               )}
             </div>
 
+            {tab === "checklist" && <ChecklistView state={state} />}
             {tab === "screen" && <ScreeningView state={state} onOverride={overrideGate} />}
             {tab === "refs" && <RefAuditView state={state} />}
             {tab === "adr" && <AdrView state={state} onOverride={overrideGate} />}

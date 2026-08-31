@@ -163,3 +163,20 @@ export function referenceIntegrity(audit: RefAudit | undefined): RefIntegrity {
     hits,
   };
 }
+
+export interface AltTextScan {
+  figures: number;
+  tables: number;
+  descriptions: number;
+}
+
+/** LaTeX only: acmart requires a \Description{} for every figure (accessibility). */
+export function scanAltText(latexText: string | undefined): AltTextScan | null {
+  if (!latexText) return null;
+  const count = (re: RegExp) => (latexText.match(re) ?? []).length;
+  return {
+    figures: count(/\\begin\{(?:figure|figure\*|teaserfigure|marginfigure|wrapfigure)\}/g),
+    tables: count(/\\begin\{(?:table|table\*)\}/g),
+    descriptions: count(/\\Description\s*[\[{]/g),
+  };
+}

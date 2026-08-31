@@ -96,9 +96,9 @@ export const DESK_REJECT_CHECKS = [
     id: "RV-1",
     name: "Identity",
     severity: "hard",
-    basis: "model",
-    prompt: "Author names, affiliations, acknowledgments, funding statements, ethics-board names, or first-person references to prior work ('our previous work [X]', 'we previously showed') that identify the authors in the text.",
-    method: "The model reads the full text for author or institution identifiers. In CHI 2026 testing this caught 26 of 71 real breaches with no false positives on 250 accepted papers; misses were self-citations phrased in the first person, identifying figures, and supplementary files — which this rehearsal cannot see either.",
+    basis: "both",
+    prompt: "Author names or affiliations in the title block, header, or footer (changing the text colour is not sufficient); acknowledgments naming people, funders, or grant numbers; a named IRB or ethics board; over-specific study locations or lab names; and first-person references to prior work ('our previous work [X]', 'we previously showed') — third-person self-citation is fine.",
+    method: "Two parts. Deterministic: the PDF's document-information Author field is read from the file (the leak pdfinfo would show). Model: the full text is read for author or institution identifiers. In CHI 2026 testing the real check caught 26 of 71 breaches with no false positives on 250 accepted papers; misses were first-person self-citations, identifying figures, and supplementary files — figures and supplements are not inspected here either.",
   },
   {
     id: "RV-2",
@@ -194,26 +194,6 @@ export const RECOMMENDATION_SCALE = [
   { code: "RR", label: "Revise & Resubmit" },
   { code: "RRX", label: "Either Reject or Revise & Resubmit" },
   { code: "X", label: "Reject" },
-] as const;
-
-export const SUBCOMMUNITIES = [
-  "Auto-detect from the paper",
-  "Accessibility & Aging",
-  "Blending Interaction: Engineering Interactive Systems & Tools",
-  "Building Devices: Hardware, Materials & Fabrication",
-  "Computational Interaction",
-  "Critical Computing, Sustainability & Social Justice",
-  "Design",
-  "Games & Play",
-  "Health & Wellbeing",
-  "Interacting with Devices: Interaction Techniques & Modalities",
-  "Interaction Beyond the Individual",
-  "Learning, Education & Families",
-  "Privacy & Security",
-  "Understanding People: Qualitative Methods",
-  "Understanding People: Quantitative Methods",
-  "User Experience & Usability",
-  "Visualization",
 ] as const;
 
 export const BASE_RATES = `Calibration facts you must apply:

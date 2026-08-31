@@ -1,10 +1,163 @@
 "use client";
 
-import type { RunState, Review, RefVerdict, DeskRejectCheck, GateName } from "@/lib/types";
+import type { RunState, Review, RefVerdict, DeskRejectCheck, GateName, PaperInfo, Persona } from "@/lib/types";
 import { DECISION_LABELS, RECOMMENDATION_SCALE, PCS_COMPLETENESS, WORD_THRESHOLD } from "@/lib/chi2027";
+import { KEYWORD_FRAMING, KEYWORD_RULES, groupOf, type KeywordGroup } from "@/lib/keywords";
+import {
+  CHECKLIST_SECTIONS,
+  CHECKLIST_LINKS,
+  CHECKLIST_DISCLAIMER,
+  KEY_DATES,
+  WHATS_NEW,
+  evaluateChecklist,
+  lengthCategory,
+  type AutoStatus,
+} from "@/lib/checklist";
+import { checklistMarkdown } from "@/lib/markdown";
 import { useState } from "react";
 
 export type OverrideHandler = (gate: GateName) => void;
+
+// ------------------------------------------------------------ PCS keywords
+
+export function PcsKeywordsView({ paper }: { paper: PaperInfo }) {
+  const pcs = paper.pcs;
+  if (!pcs) return null;
+  const groups: [KeywordGroup, string[]][] = [
+    ["domain", pcs.domain ?? []],
+    ["method", pcs.method ?? []],
+    ["users", pcs.users ?? []],
+    ["contribution", pcs.contribution ? [pcs.contribution] : []],
+  ];
+  const text = groups.map(([g, list]) => `${KEYWORD_RULES[g].label}: ${list.join("; ") || "—"}`).join("\n");
+  return (
+    <div className="card" style={{ padding: "14px 18px", marginTop: 12 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <span className="cardlbl">PCS keywords to enter</span>
+        <span style={{ fontSize: 12.5, color: "var(--soft)", fontStyle: "italic" }}>“{KEYWORD_FRAMING}”</span>
+        <button className="btn ghost small" style={{ marginLeft: "auto" }} onClick={() => navigator.clipboard.writeText(text)}>
+          Copy for PCS
+        </button>
+      </div>
+      {groups.map(([g, list]) => {
+        const rule = KEYWORD_RULES[g];
+        const ok = list.length >= rule.min && list.length <= rule.max;
+        return (
+          <div key={g} style={{ display: "flex", gap: 8, alignItems: "flex-start", flexWrap: "wrap", marginTop: 8 }}>
+            <span style={{ minWidth: 170, fontSize: 12.5, fontWeight: 700, color: ok ? "var(--soft)" : "var(--pen)" }}>
+              {rule.label}{" "}
+              <span className="mono" style={{ fontWeight: 500 }}>
+                {list.length}/{rule.max}
+              </span>
+            </span>
+            {list.length === 0 && (
+              <span style={{ fontSize: 12.5, color: "var(--soft)" }}>
+                {g === "users" ? "none — no specific population is the focus" : "none chosen"}
+              </span>
+            )}
+            {list.map((k) => (
+              <span
+                key={k}
+                className="kw"
+                title={groupOf(k) ? rule.hint : "Not an exact taxonomy name — pick the closest in PCS"}
+                style={groupOf(k) ? undefined : { outline: "2px dashed var(--warn)" }}
+              >
+                {k}
+              </span>
+            ))}
+          </div>
+        );
+      })}
+      <p style={{ fontSize: 12, color: "var(--soft)", marginTop: 8 }}>
+        Chosen from the official CHI 2027 taxonomy to tag the expertise a reviewer needs — not to describe the paper.
+        The matching tool compares these with reviewers&apos; self-rated expertise, and rarer keywords weigh more.
+      </p>
+    </div>
+  );
+}
+
+// -------------------------------------------------------- Reviewer matching
+
+function levelOf(p: Persona, tag: string): number {
+  return p.expertiseTags?.find((e) => e.tag === tag)?.level ?? 0;
+}
+
+export function MatchingView({ state }: { state: RunState }) {
+  const m = state.matching;
+  const personas = state.personas ?? [];
+  if (!m || !personas.length || !m.tags.length) return null;
+  const coverClass = m.teamCovers === m.total ? "pass" : m.teamCovers >= m.total - 1 ? "warn" : "fail";
+  return (
+    <div className="card" style={{ padding: "14px 18px" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 8 }}>
+        <span className="cardlbl">Reviewer matching</span>
+        <span className={`pill ${coverClass}`}>
+          Team covers {m.teamCovers} of {m.total} keywords at expertise ≥3
+        </span>
+      </div>
+      <p style={{ fontSize: 12.5, color: "var(--soft)", marginBottom: 10 }}>
+        Each reviewer self-rated their expertise over the PCS taxonomy, as real reviewers do. The score is the
+        weighted overlap with your keywords — rarer keywords weigh more, as in CHI&apos;s matching tool. The AC, not
+        the score, picks the panel; their duty is that the team collectively covers topic <em>and</em> method.
+      </p>
+      <div className="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Your keyword</th>
+              <th title="IDF-style weight: log of the group's vocabulary size">Weight</th>
+              {personas.map((p) => (
+                <th key={p.id} style={{ textAlign: "center" }} title={p.archetype}>
+                  {p.id}
+                  {p.counted === false ? "*" : ""}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {m.coverage.map((c) => (
+              <tr key={c.tag}>
+                <td>
+                  <span className="tag effort" style={{ marginRight: 6 }}>{KEYWORD_RULES[c.group].label}</span>
+                  {c.tag}
+                  {c.best < 3 && (
+                    <span className="pill warn" style={{ marginLeft: 8 }}>
+                      uncovered
+                    </span>
+                  )}
+                </td>
+                <td className="mono" style={{ color: "var(--soft)" }}>{c.weight.toFixed(1)}</td>
+                {personas.map((p) => {
+                  const l = levelOf(p, c.tag);
+                  return (
+                    <td key={p.id} style={{ textAlign: "center" }}>
+                      <span className={`lvl l${l}`} title={`${p.id} self-rated ${l || "no"} expertise`}>{l || "–"}</span>
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+            <tr>
+              <td colSpan={2}>
+                <strong>Match score</strong>
+              </td>
+              {personas.map((p) => (
+                <td key={p.id} style={{ textAlign: "center" }}>
+                  <strong style={{ fontVariantNumeric: "tabular-nums" }}>{Math.round((p.match ?? 0) * 100)}%</strong>
+                </td>
+              ))}
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p style={{ fontSize: 12, color: "var(--soft)", marginTop: 8 }}>
+        * R5 is advisory and does not count toward coverage. An uncovered keyword is where the real AC would replace a
+        suggestion — and where your reviewers may lack the expertise to appreciate the work, so choose keywords that
+        name expertise a reviewer can actually hold.
+      </p>
+    </div>
+  );
+}
 
 function Segs({ score }: { score: number }) {
   return (
@@ -224,7 +377,7 @@ export function ScreeningView({ state, onOverride }: { state: RunState; onOverri
                 {blocking.length} blocking check{blocking.length > 1 ? "s" : ""} flagged:{" "}
                 <strong>{blocking.map((c) => `${c.id} ${c.name}`).join(", ")}</strong>. This is what the real CHI 2027 tool
                 does — it surfaces a candidate with evidence and reasoning; it never rejects. The AC then reads the paper
-                and this report, forms an independent judgment, and the Subcommittee Chair confirms before any decision
+                and this report, forms an independent judgment, and the Subcommunity Chair confirms before any decision
                 reaches the authors. A confirmed flag ends the submission, which is why the rehearsal stopped here.
                 {overridden && " You overrode this gate, as an AC would for a wrong flag, and the run continued."}
               </>
@@ -562,6 +715,7 @@ export function ReviewRoomView({ state }: { state: RunState }) {
           {positive} of {counted.length} at A/ARR {positive >= 3 ? "— meets the Minor Revisions threshold" : "— below the Minor Revisions threshold (3 needed)"}
         </span>
       </div>
+      <MatchingView state={state} />
       <div className="review-grid">
         {reviews.map((r) => (
           <ReviewCard key={r.personaId} r={r} />
@@ -694,6 +848,182 @@ export function GuideView({ state }: { state: RunState }) {
           )}
         </>
       )}
+    </div>
+  );
+}
+
+// ------------------------------------------------------ Submission checklist
+
+function autoPill(s: AutoStatus) {
+  if (s === "pass") return <span className="pill pass">✓ Verified from upload</span>;
+  if (s === "flag") return <span className="pill fail">✗ Fix before submitting</span>;
+  return <span className="pill neutral">? Check yourself</span>;
+}
+
+function fmtSize(bytes: number): string {
+  return bytes >= 1_048_576 ? `${(bytes / 1_048_576).toFixed(1)} MB` : `${Math.round(bytes / 1024)} KB`;
+}
+
+export function ChecklistView({ state }: { state: RunState }) {
+  const evaln = evaluateChecklist(state);
+  const storageKey = `rr-checklist-${state.runId}`;
+  const [done, setDone] = useState<Set<string>>(() => {
+    try {
+      const raw = localStorage.getItem(storageKey);
+      return new Set(raw ? (JSON.parse(raw) as string[]) : []);
+    } catch {
+      return new Set();
+    }
+  });
+  const toggle = (id: string) =>
+    setDone((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      try {
+        localStorage.setItem(storageKey, JSON.stringify([...next]));
+      } catch {
+        /* storage unavailable — in-memory only */
+      }
+      return next;
+    });
+
+  const len = lengthCategory(state.paper?.words);
+  const meta = state.pdfMeta;
+  const c = evaln.counts;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <div className="card" style={{ padding: "16px 20px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <h2 style={{ fontSize: 22 }}>CHI 2027 paper submission checklist</h2>
+          <button
+            className="btn ghost small"
+            style={{ marginLeft: "auto" }}
+            onClick={() => navigator.clipboard.writeText(checklistMarkdown(state, done))}
+          >
+            Copy as Markdown
+          </button>
+        </div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}>
+          <span className="pill pass">{c.pass} verified from your upload</span>
+          <span className={`pill ${c.flag ? "fail" : "neutral"}`}>{c.flag} to fix</span>
+          <span className="pill neutral">{c.unverified} to check yourself</span>
+          <span className="pill navy">
+            {[...done].filter((id) => !evaln.auto[id]).length} of {c.manual} manual items ticked
+          </span>
+        </div>
+        <p style={{ fontSize: 12.5, color: "var(--soft)", marginTop: 10, lineHeight: 1.55 }}>
+          <strong>Read this first.</strong> {CHECKLIST_DISCLAIMER} It does not guarantee a valid submission, but it
+          covers the vast majority of desk-reject grounds. Items marked <span className="ck-new">NEW 2027</span> changed
+          from recent years.
+        </p>
+      </div>
+
+      <div className="card" style={{ padding: "16px 20px" }}>
+        <div className="cardlbl" style={{ marginBottom: 8 }}>Verified from your upload</div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: "8px 24px", fontSize: 13.5 }}>
+          <div>
+            <div className="rsec">Files</div>
+            {state.files.map((f) => (
+              <div key={f.name} className="mono" style={{ fontSize: 12.5 }}>
+                {f.name} · {fmtSize(f.size)}
+              </div>
+            ))}
+            <div style={{ color: "var(--soft)", marginTop: 2 }}>{state.kind === "pdf" ? "PDF" : "LaTeX source"} · {state.paper?.pages} pages</div>
+          </div>
+          <div>
+            <div className="rsec">Length</div>
+            <div>
+              ≈{state.paper?.words.toLocaleString()} words →{" "}
+              <strong style={{ color: len.status === "flag" ? "var(--pen)" : "var(--ink)" }}>{len.label}</strong>
+            </div>
+            <div style={{ color: "var(--soft)", fontSize: 12.5 }}>{len.note}</div>
+          </div>
+          <div>
+            <div className="rsec">PDF metadata</div>
+            {state.kind !== "pdf" ? (
+              <div style={{ color: "var(--soft)" }}>LaTeX upload — compile and run <span className="mono">pdfinfo</span> on the PDF.</div>
+            ) : !meta?.readable ? (
+              <div style={{ color: "var(--soft)" }}>Not readable from this file — run <span className="mono">pdfinfo</span>.</div>
+            ) : (
+              <div className="mono" style={{ fontSize: 12.5, lineHeight: 1.6 }}>
+                Author: {meta.author ? <span style={{ color: evaln.auto["B2"]?.status === "flag" ? "var(--pen)" : "inherit", fontWeight: 700 }}>{meta.author}</span> : <em>empty</em>}
+                <br />
+                Title: {meta.title || <em>empty</em>}
+                <br />
+                Creator: {meta.creator || <em>—</em>} · Producer: {meta.producer || <em>—</em>}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 12 }}>
+        {WHATS_NEW.map((w) => (
+          <div key={w.title} className="card" style={{ padding: "12px 16px" }}>
+            <div style={{ fontSize: 14, fontWeight: 700 }}>
+              <span className="ck-new">NEW 2027</span>
+              {w.title}
+            </div>
+            <p style={{ fontSize: 13, color: "var(--soft)", marginTop: 4 }}>{w.text}</p>
+          </div>
+        ))}
+      </div>
+
+      {CHECKLIST_SECTIONS.map((sec) => (
+        <div key={sec.id} className="card" style={{ padding: "14px 20px" }}>
+          <div className="cardlbl" style={{ marginBottom: 4 }}>
+            {sec.id}. {sec.title}
+          </div>
+          {sec.items.map((item) => {
+            const auto = evaln.auto[item.id];
+            return (
+              <div key={item.id} className="ck-row">
+                {auto ? (
+                  <span style={{ flexShrink: 0, marginTop: 1 }}>{autoPill(auto.status)}</span>
+                ) : (
+                  <input type="checkbox" checked={done.has(item.id)} onChange={() => toggle(item.id)} aria-label={item.text} />
+                )}
+                <div style={{ opacity: !auto && done.has(item.id) ? 0.55 : 1 }}>
+                  <div className="ck-text">
+                    {item.isNew && <span className="ck-new">NEW 2027</span>}
+                    {item.text}
+                  </div>
+                  {item.detail && <div className="ck-note">{item.detail}</div>}
+                  {auto && <div className={`ck-note ${auto.status === "flag" ? "flag" : ""}`}>{auto.note}</div>}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      ))}
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 16 }}>
+        <div className="card table-wrap" style={{ padding: "14px 20px" }}>
+          <div className="cardlbl" style={{ marginBottom: 6 }}>Key dates (Anywhere on Earth)</div>
+          <table>
+            <tbody>
+              {KEY_DATES.map((d) => (
+                <tr key={d.date}>
+                  <td className="mono" style={{ whiteSpace: "nowrap", fontSize: 12.5 }}>{d.date}</td>
+                  <td style={{ fontSize: 13.5 }}>{d.milestone}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div className="card" style={{ padding: "14px 20px" }}>
+          <div className="cardlbl" style={{ marginBottom: 6 }}>Relevant websites</div>
+          <ul className="tight" style={{ fontSize: 13.5 }}>
+            {CHECKLIST_LINKS.map((l) => (
+              <li key={l.url}>
+                <a href={l.url} target="_blank" rel="noreferrer">{l.label}</a>
+              </li>
+            ))}
+          </ul>
+        </div>
+      </div>
     </div>
   );
 }

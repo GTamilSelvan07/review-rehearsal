@@ -583,3 +583,48 @@ details.rv-method summary {
   font-size: 14.5px;
   line-height: 1.55;
 }
+
+/* ---- reviewer matching levels ---- */
+
+.lvl {
+  display: inline-grid;
+  place-items: center;
+  width: 26px;
+  height: 22px;
+  border-radius: 5px;
+  font-size: 12.5px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.lvl.l0 { background: var(--panel); color: var(--faint, #9aa3ad); }
+.lvl.l1 { background: var(--panel); color: var(--soft); }
+.lvl.l2 { background: var(--warn-soft); color: var(--warn); }
+.lvl.l3 { background: var(--brand-soft); color: var(--brand-dark); }
+.lvl.l4 { background: var(--brand); color: #fff; }
+
+/* ---- submission checklist ---- */
+
+.ck-row {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--panel);
+}
+.ck-row:last-child { border-bottom: none; }
+.ck-row input[type="checkbox"] { width: 18px; height: 18px; margin-top: 2px; accent-color: var(--pass); flex-shrink: 0; }
+.ck-text { font-size: 14px; line-height: 1.5; }
+.ck-note { font-size: 12.5px; color: var(--soft); margin-top: 3px; line-height: 1.5; }
+.ck-note.flag { color: var(--pen); }
+.ck-new {
+  display: inline-block;
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  padding: 1px 7px;
+  border-radius: 4px;
+  background: var(--pen);
+  color: #fff;
+  margin-right: 6px;
+  vertical-align: middle;
+}

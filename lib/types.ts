@@ -16,12 +16,24 @@ export interface RefEntry {
   doi: string | null;
 }
 
+/** The CHI 2027 PCS keywords: the expertise a reviewer needs to judge the paper. */
+export interface PcsKeywords {
+  /** 2–6 */
+  domain: string[];
+  /** 1–2 */
+  method: string[];
+  /** 0–2, only if a specific population is the focus */
+  users: string[];
+  /** exactly 1 */
+  contribution: string;
+}
+
 export interface PaperInfo {
   title: string;
   abstract: string;
   subcommunity: string;
-  /** Expertise descriptors the matching tool would use (author-supplied in PCS). */
-  keywords: string[];
+  /** PCS keywords the author should enter, chosen from the official taxonomy. */
+  pcs: PcsKeywords;
   pages: number;
   words: number;
   sections: { title: string; page: number | null }[];
@@ -97,6 +109,13 @@ export interface AdrReport {
   acNote: string;
 }
 
+export interface ExpertiseTag {
+  /** A PCS taxonomy keyword. */
+  tag: string;
+  /** Self-rated expertise 1–4, as reviewers declare in PCS. */
+  level: number;
+}
+
 export interface Persona {
   id: string;
   archetype: string;
@@ -105,8 +124,28 @@ export interface Persona {
   focus: string[];
   style: string;
   biases: string;
+  /** Self-rated expertise profile over the PCS taxonomy (~8 keywords). */
+  expertiseTags: ExpertiseTag[];
+  /** IDF-weighted match to the paper's keywords, 0–1 (computed in code). */
+  match?: number;
   /** false = adversarial advisory reviewer, excluded from decision thresholds */
   counted?: boolean;
+}
+
+export interface MatchTag {
+  tag: string;
+  group: "domain" | "method" | "users" | "contribution";
+  weight: number;
+}
+
+export interface Matching {
+  tags: MatchTag[];
+  scores: { personaId: string; score: number }[];
+  /** For each paper keyword: the best self-rating among counted reviewers and who holds it. */
+  coverage: (MatchTag & { best: number; by: string | null })[];
+  /** Keywords covered at expertise ≥3 by at least one counted reviewer. */
+  teamCovers: number;
+  total: number;
 }
 
 export type Recommendation = "A" | "ARR" | "RR" | "RRX" | "X";
@@ -195,12 +234,25 @@ export type StageName =
 /** Gates the user chose to override, as the AC may override an automated flag. */
 export type GateName = "deskreject" | "adr";
 
+export interface PdfMetadata {
+  readable: boolean;
+  author?: string;
+  title?: string;
+  subject?: string;
+  keywords?: string;
+  creator?: string;
+  producer?: string;
+}
+
 export interface RunState {
   runId: string;
   kind: SourceKind;
   files: UploadedFile[];
+  /** @deprecated CHI 2027 has no subcommittees; kept so old run states still parse. */
   subcommunityHint?: string;
   geminiFileUri?: string | null;
+  /** Document-information fields read from the uploaded PDF (anonymization leak check). */
+  pdfMeta?: PdfMetadata;
   latexText?: string;
   bibText?: string;
   paper?: PaperInfo;
@@ -208,6 +260,7 @@ export interface RunState {
   deskReject?: DeskRejectResult;
   adr?: AdrReport;
   personas?: Persona[];
+  matching?: Matching;
   reviews?: Review[];
   meta?: MetaReview;
   guide?: Guide;

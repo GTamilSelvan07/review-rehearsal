@@ -17,7 +17,6 @@ import {
   ADR_REVIEWABILITY,
   CONTRIBUTION_TYPES,
   DESK_REJECT_CHECKS,
-  MATCH_KEYWORDS_TARGET,
   RECOMMENDATION_SCALE,
   BASE_RATES,
   REVIEW_ANATOMY,
@@ -29,6 +28,9 @@ import { parseBibtex, detex, makeBibtex } from "./bibtex";
 import { verifyReferences, searchReadingList } from "./refcheck";
 import { quoteAppearsIn } from "./similarity";
 import { scanMaskedReferences, scanHiddenText, scanBuildDefects, referenceIntegrity } from "./screen";
+import { KEYWORD_FRAMING, KEYWORD_RULES, taxonomyPrompt } from "./keywords";
+import { normalizePcs, normalizeExpertise, computeMatching, paperTags } from "./matching";
+import { extractPdfMeta, authorLooksAnonymous } from "./pdfmeta";
 import { unzipSync } from "fflate";
 import {
   PAPER_SCHEMA,
@@ -87,6 +89,8 @@ export async function runIngest(state: RunState): Promise<Partial<RunState>> {
   const bibFiles = texts.filter((t) => t.name.toLowerCase().endsWith(".bib"));
 
   const update: Partial<RunState> = {};
+  // Document-information fields (the "Author" leak the anonymization checklist warns about).
+  if (pdfBuf) update.pdfMeta = extractPdfMeta(pdfBuf);
   if (texFiles.length) {
     update.kind = "latex";
     update.latexText = texFiles.map((t) => `% ---- ${t.name} ----\n${t.text}`).join("\n\n");
@@ -114,8 +118,13 @@ export async function runIngest(state: RunState): Promise<Partial<RunState>> {
 {
   "title": string,
   "abstract": string,
-  "subcommunity": string,          // best-fitting CHI subcommunity${state.subcommunityHint && !state.subcommunityHint.startsWith("Auto") ? ` (the author suggests: ${JSON.stringify(state.subcommunityHint)} — override only if clearly wrong)` : ""}
-  "keywords": string[],             // ${MATCH_KEYWORDS_TARGET}-10 expertise descriptors a CHI reviewer-matching system would use for this paper: specific topics, methods, populations, and technologies (e.g. "haptic feedback", "thematic analysis", "older adults", "LLM-based agents"); prefer precise descriptors over broad ones, since rarer descriptors weigh more in matching
+  "subcommunity": string,          // the paper's closest thematic area within HCI, in a few words (CHI 2027 has no author-chosen subcommittees — context only)
+  "pcs": {                          // the CHI 2027 PCS keywords. Framing: "${KEYWORD_FRAMING}" — tag the EXPERTISE a reviewer needs to judge this paper, not its topic
+    "domain": string[],             // ${KEYWORD_RULES.domain.min}-${KEYWORD_RULES.domain.max} names, VERBATIM from the DOMAIN list below
+    "method": string[],             // ${KEYWORD_RULES.method.min}-${KEYWORD_RULES.method.max} names from the METHOD / APPROACH list
+    "users": string[],              // 0-${KEYWORD_RULES.users.max} names from the USERS list — only if a specific population is the focus, else []
+    "contribution": string          // exactly 1 name from the PRIMARY CONTRIBUTION list
+  },
   "pages": number,
   "words": number,                  // word count of the body text excluding references and appendices (CHI's policy-basis count); estimate carefully
   "sections": [{ "title": string, "page": number | null }],
@@ -124,11 +133,22 @@ export async function runIngest(state: RunState): Promise<Partial<RunState>> {
   "statedLimitations": string[],    // limitations the AUTHORS THEMSELVES state, verbatim-ish
   "references": [{ "key": string, "raw": string, "title": string, "authors": string[], "year": number | null, "venue": string, "doi": string | null }],${wantFullText ? "" : " // leave references as [] — the bibliography is parsed separately"}
   "fullText": string                // ${wantFullText ? "the complete plain text of the paper body (no references section), preserving sentence wording exactly" : "leave as empty string"}
-}`,
+}
+
+PCS KEYWORD TAXONOMY (use the exact names; pick the expertise a reviewer would need):
+DOMAIN (${KEYWORD_RULES.domain.hint}):
+${taxonomyPrompt("domain")}
+METHOD / APPROACH (${KEYWORD_RULES.method.hint}):
+${taxonomyPrompt("method")}
+USERS (${KEYWORD_RULES.users.hint}):
+${taxonomyPrompt("users")}
+PRIMARY CONTRIBUTION (${KEYWORD_RULES.contribution.hint}):
+${taxonomyPrompt("contribution")}`,
       },
     ],
   });
 
+  paper.pcs = normalizePcs(paper.pcs);
   if (working.kind === "latex") {
     paper.references = parseBibtex(working.bibText ?? "");
     paper.fullText = "";
@@ -170,7 +190,10 @@ export async function runDeskReject(state: RunState): Promise<Partial<RunState>>
   const build = scanBuildDefects(fullText, state.latexText);
   const refs = referenceIntegrity(state.refAudit);
 
+  const meta = state.pdfMeta;
+  const metaLeak = Boolean(meta?.readable && !authorLooksAnonymous(meta.author));
   const deterministicNotes = [
+    `RV-1 PDF metadata scan: ${meta?.readable ? `Author field = ${meta.author ? `"${meta.author}"` : "(empty)"}${meta.title ? `; Title field = "${meta.title.slice(0, 120)}"` : ""}` : "document-information fields not readable from this upload"}`,
     `RV-3 masked-reference scan: ${masked.length ? masked.slice(0, 8).join(" | ") : "no masking phrases found in any bibliography entry"}`,
     `RV-8 build-defect scan: ${build.length ? build.join(" | ") : "no '??', '[?]' or draft markers found in the text"}`,
     `RV-10 AI-directed-text scan: ${hidden.length ? hidden.slice(0, 5).join(" | ") : "no instructions addressed to AI readers found"}`,
@@ -187,7 +210,7 @@ export async function runDeskReject(state: RunState): Promise<Partial<RunState>>
     parts: [
       ...paperParts(state),
       {
-        text: `You are the CHI 2027 desk-reject support tool. You do NOT reject papers: you surface candidate violations for an Associate Chair to inspect, with the evidence and the reasoning an AC would need to confirm or dismiss the flag. A Subcommittee Chair then confirms any desk rejection.
+        text: `You are the CHI 2027 desk-reject support tool. You do NOT reject papers: you surface candidate violations for an Associate Chair to inspect, with the evidence and the reasoning an AC would need to confirm or dismiss the flag. A Subcommunity Chair then confirms any desk rejection.
 
 Run each check below. Quote the strongest concrete evidence for your verdict (verbatim text, URLs, reference entries), or state exactly what you looked for and did not find. Use "unverified" when the document does not let you tell (e.g. you cannot inspect rendering instructions or supplementary files).
 
@@ -227,6 +250,21 @@ Return JSON: { "checks": [{ "id": one of ${JSON.stringify(MODEL_JUDGED_CHECK_IDS
     let reasoning = m?.reasoning ?? "";
     let deterministicHits: string[] | undefined;
 
+    if (def.id === "RV-1" && meta?.readable) {
+      const shown = meta.author ? `“${meta.author}”` : "empty";
+      deterministicHits = [`PDF metadata Author field: ${shown}${metaLeak ? " — names the authors" : " — anonymous"}`];
+      if (metaLeak) {
+        // Metadata is a fact, not a judgment: a named Author field is a breach whatever the text says.
+        const leak = `PDF document-information Author field reads “${meta.author}”.`;
+        if (status !== "flag") {
+          status = "flag";
+          evidence = `${leak}${m?.evidence ? ` Text read: ${m.evidence}` : ""}`;
+          reasoning = `The PDF's own metadata names the authors — the leak the anonymization policy specifically warns about (deleting the byline or changing text colour is not enough). Clear the exporter's Author field (LaTeX: \\hypersetup{pdfauthor={}}; Word: File → Info → Inspect Document) and re-export.${m?.reasoning ? ` Text read: ${m.reasoning}` : ""}`;
+        } else {
+          evidence = `${evidence} · ${leak}`;
+        }
+      }
+    }
     if (def.id === "RV-3") deterministicHits = masked;
     if (def.id === "RV-8") deterministicHits = build;
     if (def.id === "RV-10") {
@@ -260,7 +298,7 @@ export async function runAdr(state: RunState): Promise<Partial<RunState>> {
     parts: [
       ...paperParts(state),
       {
-        text: `You are simulating the Associate Chair's first-stage Assisted Desk Reject (ADR) assessment for CHI 2027. In the real process this is a HUMAN judgment — CHI 2027 deploys no AI rubric tool for ADR; the AC reads the paper, decides whether it has a realistic path to acceptance, and the Subcommittee Chair and Papers Chairs confirm. Reason as that AC would, using the rubric the ADR process is built on.
+        text: `You are simulating the Associate Chair's first-stage Assisted Desk Reject (ADR) assessment for CHI 2027. In the real process this is a HUMAN judgment — CHI 2027 deploys no AI rubric tool for ADR; the AC reads the paper, decides whether it has a realistic path to acceptance, and the Subcommunity Chair and Papers Chairs confirm. Reason as that AC would, using the rubric the ADR process is built on.
 
 STEP 1 — Contribution type(s), BEFORE any quality judgment. Infer the paper's contribution type(s) from ${JSON.stringify([...CONTRIBUTION_TYPES])}, tentatively and with the premise visible (what in the paper makes you think so), and state what form of validation is appropriate for each type. An artifact paper, a qualitative study, and a controlled experiment warrant different expectations — never apply a single "research quality" yardstick.
 
@@ -303,31 +341,66 @@ const ARCHETYPES = [
 
 export async function runPanel(state: RunState): Promise<Partial<RunState>> {
   const p = state.paper!;
+  const tags = paperTags(p.pcs);
+  const byGroup = (g: string) => tags.filter((t) => t.group === g).map((t) => t.tag);
   const personas = await genJSON<{ personas: Persona[] }>({
     system: SIM_NOTE,
     thinking: "high",
     jsonSchema: PERSONAS_SCHEMA,
     parts: [
       {
-        text: `A CHI 2027 AC is selecting four external reviewers for this paper. CHI's matching system suggests candidates by comparing the paper's expertise descriptors with reviewers' self-declared keywords (rarer descriptors weigh more); the AC then decides, and must ensure the team collectively covers the paper's topics AND its methods.
+        text: `A CHI 2027 AC is selecting four external reviewers for this paper. CHI's matching system suggests candidates by comparing the paper's PCS keywords with reviewers' self-rated expertise over the same taxonomy (rarer keywords weigh more); the AC then decides, and must ensure the team collectively covers the paper's topics AND its methods.
+
 Title: ${p.title}
 Abstract: ${p.abstract}
 Subcommunity: ${p.subcommunity}
-Expertise descriptors: ${(p.keywords ?? []).join("; ")}
 Methods: ${p.methods.join("; ")}
+
+The paper's PCS keywords — "${KEYWORD_FRAMING}":
+- Domain: ${byGroup("domain").join("; ") || "(none)"}
+- Method / Approach: ${byGroup("method").join("; ") || "(none)"}
+- Users: ${byGroup("users").join("; ") || "(none)"}
+- Primary contribution: ${byGroup("contribution").join("; ") || "(none)"}
 
 Create five INVENTED reviewer personas (no real researchers' names or identifiable affiliations — describe them by research profile only), one per slot:
 ${ARCHETYPES.map((a) => `- ${a.id} · ${a.archetype} (expertise ${a.expertise}/4): ${a.note}`).join("\n")}
 
-For each, make the profile SPECIFIC to this paper's topics and methods. Give each a distinct reviewing style (e.g. numbered lists vs flowing prose; terse vs thorough) and one realistic bias or hobbyhorse.
+For each persona, also declare their PCS expertise profile as real reviewers do: 6-10 "expertiseTags", each a keyword taken VERBATIM from the taxonomy below with a self-rated level 1-4 (4 = expert, 3 = knowledgeable, 2 = passing knowledge, 1 = none). Make the profiles realistic and DIFFERENT — a real pool is uneven:
+- R1 rates 4 on at least two of the paper's domain keywords and 4 on the primary-contribution type; weaker (1-2) on the method keywords.
+- R2 rates 4 on the paper's method keyword(s) and 2-3 on its domain keywords; add 2-3 adjacent method keywords at 4.
+- R3 rates 2-3 on the paper's keywords and 4 on adjacent domains the paper touches only in passing.
+- R4 rates 3 on the applied/user-facing keywords (users, applied domains) and 2 on the method keywords.
+- R5 rates 3-4 across most of the paper's keywords (a senior generalist) — expertise is broad, not narrow.
+Every persona must include at least one of the paper's keywords they rate only 1-2: nobody covers everything.
 
-Return JSON: { "personas": [{ "id": "R1".."R5", "archetype": string, "background": string, "expertise": number, "focus": string[], "style": string, "biases": string }] }`,
+Give each a distinct reviewing style (e.g. numbered lists vs flowing prose; terse vs thorough) and one realistic bias or hobbyhorse, and make "background" and "focus" SPECIFIC to this paper.
+
+Return JSON: { "personas": [{ "id": "R1".."R5", "archetype": string, "background": string, "expertise": number, "focus": string[], "style": string, "biases": string, "expertiseTags": [{ "tag": string, "level": 1-4 }] }] }
+
+PCS KEYWORD TAXONOMY (exact names only):
+DOMAIN:
+${taxonomyPrompt("domain", false)}
+METHOD / APPROACH:
+${taxonomyPrompt("method", false)}
+USERS:
+${taxonomyPrompt("users", false)}
+PRIMARY CONTRIBUTION:
+${taxonomyPrompt("contribution", false)}`,
       },
     ],
   });
   const countedById = new Map(ARCHETYPES.map((a) => [a.id, a.counted]));
+  const cleaned: Persona[] = personas.personas.map((q) => ({
+    ...q,
+    expertiseTags: normalizeExpertise(q.expertiseTags),
+    counted: countedById.get(q.id) ?? true,
+  }));
+  // The matching tool's job, in code: IDF-weighted overlap and team coverage.
+  const matching = computeMatching(p.pcs, cleaned);
+  const scoreById = new Map(matching.scores.map((s) => [s.personaId, s.score]));
   return {
-    personas: personas.personas.map((p) => ({ ...p, counted: countedById.get(p.id) ?? true })),
+    personas: cleaned.map((q) => ({ ...q, match: scoreById.get(q.id) })),
+    matching,
   };
 }
 

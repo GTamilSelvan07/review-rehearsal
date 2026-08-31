@@ -1,5 +1,39 @@
 import type { RunState } from "./types";
 import { DECISION_LABELS } from "./chi2027";
+import { KEYWORD_FRAMING } from "./keywords";
+import { CHECKLIST_SECTIONS, CHECKLIST_DISCLAIMER, evaluateChecklist, lengthCategory } from "./checklist";
+
+/** The submission checklist with auto-verified items filled in from the run. */
+export function checklistMarkdown(state: RunState, done?: Set<string>): string {
+  const ev = evaluateChecklist(state);
+  const lines: string[] = [];
+  lines.push(`## CHI 2027 paper submission checklist — ${state.paper?.title ?? "your paper"}`);
+  lines.push("");
+  lines.push(`> ${CHECKLIST_DISCLAIMER}`);
+  lines.push("");
+  const len = lengthCategory(state.paper?.words);
+  lines.push(`**Upload:** ${state.files.map((f) => f.name).join(", ")} · ${state.paper?.pages ?? "?"} pages · ≈${state.paper?.words?.toLocaleString() ?? "?"} words (${len.label})`);
+  if (state.pdfMeta?.readable) lines.push(`**PDF metadata:** Author = ${state.pdfMeta.author ? `"${state.pdfMeta.author}"` : "(empty)"}; Title = ${state.pdfMeta.title ? `"${state.pdfMeta.title}"` : "(empty)"}`);
+  lines.push(`**Auto-verified:** ${ev.counts.pass} passed · ${ev.counts.flag} to fix · ${ev.counts.unverified} to check yourself · ${ev.counts.manual} manual items`);
+  lines.push("");
+  for (const sec of CHECKLIST_SECTIONS) {
+    lines.push(`### ${sec.id}. ${sec.title}`);
+    for (const item of sec.items) {
+      const auto = ev.auto[item.id];
+      const tag = item.isNew ? "**NEW 2027** " : "";
+      if (auto) {
+        const mark = auto.status === "pass" ? "✓" : auto.status === "flag" ? "✗" : "?";
+        lines.push(`- ${mark} ${tag}${item.text}`);
+        lines.push(`  _${auto.note}_`);
+      } else {
+        lines.push(`- [${done?.has(item.id) ? "x" : " "}] ${tag}${item.text}`);
+        if (item.detail) lines.push(`  _${item.detail}_`);
+      }
+    }
+    lines.push("");
+  }
+  return lines.join("\n");
+}
 
 export function buildMarkdown(state: RunState): string {
   const p = state.paper;
@@ -10,8 +44,13 @@ export function buildMarkdown(state: RunState): string {
     `> Unofficial CHI 2027 review simulation (run ${state.runId}). Not affiliated with ACM/SIGCHI; not a predictor of real outcomes.`
   );
   lines.push("");
-  if (p?.keywords?.length) {
-    lines.push(`**Expertise descriptors for matching:** ${p.keywords.join(" · ")}`);
+  if (p?.pcs) {
+    lines.push(`## PCS keywords — "${KEYWORD_FRAMING}"`);
+    lines.push("");
+    lines.push(`- **Domain (2–6):** ${p.pcs.domain.join("; ") || "—"}`);
+    lines.push(`- **Method / Approach (1–2):** ${p.pcs.method.join("; ") || "—"}`);
+    lines.push(`- **Users (0–2):** ${p.pcs.users.join("; ") || "— (no specific population)"}`);
+    lines.push(`- **Primary Contribution (1):** ${p.pcs.contribution || "—"}`);
     lines.push("");
   }
 
@@ -85,6 +124,23 @@ export function buildMarkdown(state: RunState): string {
     }
     lines.push("");
     lines.push(`**Simulated AC note:** ${state.adr.acNote}`);
+    lines.push("");
+  }
+
+  if (state.matching && state.personas?.length && state.matching.tags.length) {
+    const m = state.matching;
+    const ps = state.personas;
+    lines.push(`## Reviewer matching — team covers ${m.teamCovers} of ${m.total} keywords at expertise ≥3`);
+    lines.push("");
+    lines.push(`| Keyword | Weight | ${ps.map((q) => q.id + (q.counted === false ? "*" : "")).join(" | ")} |`);
+    lines.push(`|---|---|${ps.map(() => "---").join("|")}|`);
+    for (const c of m.coverage) {
+      const cells = ps.map((q) => String(q.expertiseTags?.find((e) => e.tag === c.tag)?.level ?? "–"));
+      lines.push(`| ${c.tag}${c.best < 3 ? " _(uncovered)_" : ""} | ${c.weight.toFixed(1)} | ${cells.join(" | ")} |`);
+    }
+    lines.push(`| **Match score** | | ${ps.map((q) => `${Math.round((q.match ?? 0) * 100)}%`).join(" | ")} |`);
+    lines.push("");
+    lines.push(`_Each reviewer's self-rated expertise (1–4) over the PCS taxonomy; the score is the weighted overlap with the paper's keywords (rarer keywords weigh more). * = advisory, not counted toward coverage._`);
     lines.push("");
   }
 
@@ -173,6 +229,10 @@ export function buildMarkdown(state: RunState): string {
       });
       lines.push("");
     }
+  }
+
+  if (p) {
+    lines.push(checklistMarkdown(state));
   }
 
   return lines.join("\n");

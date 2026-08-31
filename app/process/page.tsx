@@ -27,9 +27,11 @@ const STAGES: FlowStage[] = [
     detail: (
       <>
         <p>
-          Authors submit an anonymized paper in the ACM single-column manuscript format via PCS, declaring the
-          best-fitting subcommunity. Length should be proportionate to the contribution; above 12,000 words it must be
-          justified or the paper is desk-rejectable.
+          Authors submit an anonymized paper in the ACM single-column manuscript format via PCS. There is no
+          subcommittee to choose in CHI 2027 — instead authors tag the reviewer expertise the paper needs (PCS
+          keywords) and name four review-responsibility slots from the author list. Length should be proportionate to
+          the contribution: 5,000–8,000 words are encouraged, under 5,000 is a short paper, and above 12,000 the length
+          must be justified or the paper is desk-rejectable.
         </p>
         <p>
           Anonymization is strict: no author names, no identifying acknowledgments or links, and your own prior work
@@ -151,6 +153,14 @@ const STAGES: FlowStage[] = [
           about eight descriptors per profile gives effective matching.
         </p>
         <p>
+          The descriptors come from a fixed taxonomy, framed as “a reviewer judging my work should have expertise
+          related to…”: <strong>Domain</strong> (2–6), <strong>Method / Approach</strong> (1–2),{" "}
+          <strong>Users</strong> (0–2, only if a specific population is the focus), and exactly one{" "}
+          <strong>Primary Contribution</strong>. They tag the expertise needed to assess the paper, not the paper
+          itself, and reviewers self-rate against the same list. Review Rehearsal suggests your keywords from that
+          taxonomy and builds its reviewer panel by matching self-rated expertise against them.
+        </p>
+        <p>
           Each reviewer independently files a structured form: a contribution statement, an expertise self-rating
           (1–4), written assessments of the five ACM criteria, an itemized list of required revisions, and a
           recommendation:
@@ -188,8 +198,9 @@ const STAGES: FlowStage[] = [
       <>
         <p>
           Once reviews arrive, the AC leads a discussion with the reviewers on PCS to resolve disagreements and
-          clarify concerns — synchronous, asynchronous, or hybrid, overseen by the Subcommunity Chairs. The 1AC then
-          writes a meta-review synthesizing the external reviews and the discussion into a first-round outcome.
+          clarify concerns — synchronous, asynchronous, or hybrid. Subcommunity Chairs (SCs), each overseeing 10–15
+          ACs, monitor review quality, consistency, and fairness. The single Primary AC then writes a meta-review
+          synthesizing the external reviews and the discussion into a first-round outcome.
         </p>
       </>
     ),
