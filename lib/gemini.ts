@@ -80,7 +80,7 @@ export async function genJSON<T>(opts: GenOpts): Promise<T> {
     const repaired = await genText({
       system: "You repair malformed JSON. Return ONLY the corrected JSON, no commentary, no code fences.",
       parts: [{ text: `Fix this so it parses as JSON, preserving all content:\n\n${raw.slice(0, 60_000)}` }],
-      thinking: "low",
+      thinking: "high",
     });
     return JSON.parse(stripFences(repaired)) as T;
   }
@@ -99,8 +99,9 @@ export async function genText(opts: GenOpts): Promise<string> {
         maxOutputTokens: opts.maxOutputTokens ?? 32_768,
       };
       if (opts.system) config.systemInstruction = opts.system;
-      if (useThinking && opts.thinking) {
-        config.thinkingConfig = { thinkingLevel: opts.thinking };
+      // Every call reasons at the highest level unless a caller lowers it explicitly.
+      if (useThinking) {
+        config.thinkingConfig = { thinkingLevel: opts.thinking ?? "high" };
       }
       if (useSchema && opts.jsonSchema) {
         config.responseJsonSchema = opts.jsonSchema;

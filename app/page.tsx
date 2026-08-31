@@ -2,18 +2,19 @@
 
 import { useRef, useState } from "react";
 import { upload } from "@vercel/blob/client";
-import type { RunState, StageName } from "@/lib/types";
+import type { RunState, StageName, GateName } from "@/lib/types";
 import { STAGE_ORDER } from "@/lib/types";
-import { SUBCOMMUNITIES } from "@/lib/chi2027";
+import { SUBCOMMUNITIES, MATCH_KEYWORDS_TARGET } from "@/lib/chi2027";
 import { buildMarkdown } from "@/lib/markdown";
 import { TopBar, Ribbon, type AppStep } from "@/components/chrome";
-import { RefAuditView, AdrView, ReviewRoomView, GuideView } from "@/components/results";
+import { RefAuditView, ScreeningView, AdrView, ReviewRoomView, GuideView } from "@/components/results";
 
 type StageStatus = "queued" | "active" | "done" | "failed" | "skipped";
 type Phase = "upload" | "running" | "results";
-type Tab = "refs" | "adr" | "reviews" | "guide";
+type Tab = "screen" | "refs" | "adr" | "reviews" | "guide";
 
 const DEADLINE = new Date("2026-09-10T23:59:00Z");
+const stageIndex = (id: StageName) => STAGE_ORDER.findIndex((s) => s.id === id);
 
 function daysToDeadline(): number {
   return Math.max(0, Math.ceil((DEADLINE.getTime() - Date.now()) / 86_400_000));
@@ -30,6 +31,8 @@ export default function Home() {
   const [state, setState] = useState<RunState | null>(null);
   const [tab, setTab] = useState<Tab>("guide");
   const inputRef = useRef<HTMLInputElement>(null);
+  // Always the newest state, even inside async loops where `state` is stale.
+  const latest = useRef<RunState | null>(null);
 
   const appStep: AppStep =
     phase === "upload" ? "Upload" : phase === "running" ? "Screening" : state?.guide ? "Guide" : state?.reviews ? "Reviews" : "Screening";
@@ -44,6 +47,13 @@ export default function Home() {
     else setError(null);
   }
 
+  function commit(next: RunState) {
+    latest.current = next;
+    setState(next);
+  }
+
+  const mark = (id: string, st: StageStatus) => setStatuses((prev) => ({ ...prev, [id]: st }));
+
   async function callStage(stage: StageName, current: RunState): Promise<RunState> {
     const res = await fetch("/api/stage", {
       method: "POST",
@@ -55,13 +65,57 @@ export default function Home() {
     return { ...current, ...data.update };
   }
 
+  /** Runs the pipeline from a stage index, stopping at the two gates unless they were overridden. */
+  async function runFrom(start: RunState, from: number) {
+    let current = start;
+    for (let i = from; i < STAGE_ORDER.length; i++) {
+      const stage = STAGE_ORDER[i];
+      mark(stage.id, "active");
+      current = await callStage(stage.id, current);
+      commit(current);
+      mark(stage.id, "done");
+
+      const skipRest = () => STAGE_ORDER.slice(i + 1).forEach((s) => mark(s.id, "skipped"));
+
+      if (stage.id === "deskreject" && current.deskReject && !current.deskReject.passed && !current.overrides?.includes("deskreject")) {
+        skipRest();
+        setStopNote(
+          "The desk-reject screen flagged a blocking check. In the real process the AC would read this report and the paper, and the SC would confirm before the paper is removed — it would never reach reviewers. The evidence and reasoning are in the Screening tab: fix it and run again, or override the flag if it is a false positive."
+        );
+        setTab("screen");
+        setPhase("results");
+        return;
+      }
+      if (stage.id === "adr" && current.adr?.decision === "adr" && !current.overrides?.includes("adr")) {
+        skipRest();
+        setStopNote(
+          "The simulated AC did not advance this paper past the ADR gate. In the real process authors receive the AC's written note (~Oct 25) and no external reviews. Address the note below and run again, or override the gate to see full reviews anyway."
+        );
+        setTab("adr");
+        setPhase("results");
+        return;
+      }
+    }
+    setTab("guide");
+    setPhase("results");
+  }
+
+  function failRun(err: unknown) {
+    setError(err instanceof Error ? err.message : "The run failed.");
+    setStatuses((prev) => {
+      const next = { ...prev };
+      for (const k of Object.keys(next)) if (next[k] === "active") next[k] = "failed";
+      return next;
+    });
+    setPhase(latest.current?.paper ? "running" : "upload");
+  }
+
   async function run() {
     if (!files.length) return;
     setError(null);
     setStopNote(null);
     setPhase("running");
-    const init: Record<string, StageStatus> = Object.fromEntries(STAGE_ORDER.map((s) => [s.id, "queued"]));
-    setStatuses(init);
+    setStatuses(Object.fromEntries(STAGE_ORDER.map((s) => [s.id, "queued"])));
 
     try {
       // 1. Upload directly to Blob (bypasses the 4.5 MB function body limit).
@@ -72,51 +126,38 @@ export default function Home() {
         })
       );
 
-      let current: RunState = {
+      const initial: RunState = {
         runId: `rr-${Math.random().toString(36).slice(2, 7)}`,
         kind: files.some((f) => /\.tex$/i.test(f.name)) ? "latex" : "pdf",
         files: uploaded,
         subcommunityHint: subcommunity,
       };
-      setState(current);
-
-      const mark = (id: string, st: StageStatus) => setStatuses((prev) => ({ ...prev, [id]: st }));
-
-      for (const stage of STAGE_ORDER) {
-        mark(stage.id, "active");
-        current = await callStage(stage.id, current);
-        setState(current);
-        mark(stage.id, "done");
-
-        if (stage.id === "deskreject" && current.deskReject && !current.deskReject.passed) {
-          STAGE_ORDER.slice(STAGE_ORDER.findIndex((s) => s.id === "deskreject") + 1).forEach((s) => mark(s.id, "skipped"));
-          setStopNote(
-            "Desk rejected — a hard check failed. In the real process this paper would not reach reviewers. Fix the failed checks below and run again."
-          );
-          setTab("adr");
-          setPhase("results");
-          return;
-        }
-        if (stage.id === "adr" && current.adr?.decision === "adr") {
-          (["panel", "reviews", "meta", "guide"] as const).forEach((s) => mark(s, "skipped"));
-          setStopNote(
-            "The simulated AC did not advance this paper past the ADR gate. Authors receive the AC's written feedback below — address it and run again."
-          );
-          setTab("adr");
-          setPhase("results");
-          return;
-        }
-      }
-      setTab("guide");
-      setPhase("results");
+      commit(initial);
+      await runFrom(initial, 0);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "The run failed.");
-      setStatuses((prev) => {
-        const next = { ...prev };
-        for (const k of Object.keys(next)) if (next[k] === "active") next[k] = "failed";
-        return next;
-      });
-      setPhase(state?.paper ? "running" : "upload");
+      failRun(err);
+    }
+  }
+
+  /** The human override the real process allows: an AC who disagrees with a flag continues the paper. */
+  async function overrideGate(gate: GateName) {
+    const current = latest.current;
+    if (!current) return;
+    const next: RunState = { ...current, overrides: [...(current.overrides ?? []), gate] };
+    commit(next);
+    setStopNote(null);
+    setError(null);
+    const from = stageIndex(gate) + 1;
+    setStatuses((prev) => {
+      const n = { ...prev };
+      STAGE_ORDER.slice(from).forEach((s) => (n[s.id] = "queued"));
+      return n;
+    });
+    setPhase("running");
+    try {
+      await runFrom(next, from);
+    } catch (err) {
+      failRun(err);
     }
   }
 
@@ -128,6 +169,15 @@ export default function Home() {
     a.download = `review-rehearsal-${state.runId}.md`;
     a.click();
     URL.revokeObjectURL(a.href);
+  }
+
+  function reset() {
+    setPhase("upload");
+    setFiles([]);
+    setState(null);
+    latest.current = null;
+    setStopNote(null);
+    setError(null);
   }
 
   return (
@@ -142,13 +192,13 @@ export default function Home() {
                 CHI 2027 · Papers
               </div>
               <h1 style={{ fontSize: "clamp(30px, 5vw, 44px)" }}>Rehearse the review before the review.</h1>
-              <p style={{ fontSize: 16, color: "var(--soft)", maxWidth: 560, margin: "0 auto" }}>
-                Your paper runs the real CHI 2027 gauntlet: desk-reject checks, a reference-authenticity audit, the
-                ADR rubric, four independent expert reviews plus an adversarial fifth reader, and a 1AC meta-review
-                — ending in a guide to strengthen it.
+              <p style={{ fontSize: 16, color: "var(--soft)", maxWidth: 580, margin: "0 auto" }}>
+                Your paper runs the CHI 2027 gauntlet: the desk-reject screen with the same checks the real tool runs,
+                a database-only reference audit, a simulated AC&apos;s ADR reading, four independent expert reviews
+                plus an adversarial fifth reader, and a 1AC meta-review — ending in a guide to strengthen it.
               </p>
               <p style={{ fontSize: 14 }}>
-                <a href="/process">See how the real CHI 2027 review process works →</a>
+                <a href="/process">See what the real process automates — and what it leaves to people →</a>
               </p>
             </div>
 
@@ -221,6 +271,12 @@ export default function Home() {
 
             {error && <p style={{ color: "var(--pen)", textAlign: "center", fontWeight: 600 }}>{error}</p>}
 
+            <div className="principle" style={{ maxWidth: 620, margin: "4px auto 0" }}>
+              <strong>In the real process, AI only assists the desk-reject screen — people make every decision.</strong>{" "}
+              Here a model plays every role, screener to 1AC, which is exactly what CHI does not do. That makes this a
+              rehearsal for authors, never a review, and nothing here belongs in PCS.
+            </div>
+
             <p style={{ fontSize: 13, color: "var(--soft)", textAlign: "center" }}>
               Processed once, deleted within 24 hours. Your paper is never used for training.
               <br />
@@ -262,9 +318,16 @@ export default function Home() {
               {error && (
                 <div style={{ marginTop: 14 }}>
                   <p style={{ color: "var(--pen)", fontWeight: 600 }}>{error}</p>
-                  <button className="btn ghost small" style={{ marginTop: 8 }} onClick={() => setPhase("upload")}>
-                    Back to upload
-                  </button>
+                  <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+                    {state?.deskReject && (
+                      <button className="btn ghost small" onClick={() => setPhase("results")}>
+                        See results so far
+                      </button>
+                    )}
+                    <button className="btn ghost small" onClick={reset}>
+                      Back to upload
+                    </button>
+                  </div>
                 </div>
               )}
             </div>
@@ -277,25 +340,31 @@ export default function Home() {
               <div style={{ flex: 1, minWidth: 260 }}>
                 <h1 style={{ fontSize: 26 }}>{state.paper?.title}</h1>
                 <p style={{ fontSize: 13.5, color: "var(--soft)", marginTop: 4 }}>
-                  {state.paper?.subcommunity} · {state.paper?.pages} pages · {state.paper?.references.length} references
+                  {state.paper?.subcommunity} · {state.paper?.pages} pages · ≈{state.paper?.words.toLocaleString()} words ·{" "}
+                  {state.paper?.references.length} references
                 </p>
+                {state.paper?.keywords && state.paper.keywords.length > 0 && (
+                  <div style={{ marginTop: 10, display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+                    <span
+                      className="cardlbl"
+                      title={`CHI's matching tool suggests reviewers from author-supplied expertise descriptors — about ${MATCH_KEYWORDS_TARGET} per profile works best, and rarer descriptors weigh more.`}
+                    >
+                      Descriptors for PCS matching
+                    </span>
+                    {state.paper.keywords.map((k) => (
+                      <span key={k} className="kw">{k}</span>
+                    ))}
+                  </div>
+                )}
               </div>
-              <div style={{ display: "flex", gap: 10 }}>
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
                 <button className="btn ghost small" onClick={exportMarkdown}>
                   Export Markdown
                 </button>
                 <button className="btn ghost small" onClick={() => window.print()}>
                   Print / PDF
                 </button>
-                <button
-                  className="btn ghost small"
-                  onClick={() => {
-                    setPhase("upload");
-                    setFiles([]);
-                    setState(null);
-                    setStopNote(null);
-                  }}
-                >
+                <button className="btn ghost small" onClick={reset}>
                   New run
                 </button>
               </div>
@@ -308,12 +377,21 @@ export default function Home() {
             )}
 
             <div className="tabs">
-              <button className={`tab ${tab === "refs" ? "on" : ""}`} onClick={() => setTab("refs")}>
-                Reference audit
-              </button>
-              <button className={`tab ${tab === "adr" ? "on" : ""}`} onClick={() => setTab("adr")}>
-                ADR report
-              </button>
+              {state.deskReject && (
+                <button className={`tab ${tab === "screen" ? "on" : ""}`} onClick={() => setTab("screen")}>
+                  Screening{state.deskReject.passed ? "" : " ✗"}
+                </button>
+              )}
+              {state.refAudit && (
+                <button className={`tab ${tab === "refs" ? "on" : ""}`} onClick={() => setTab("refs")}>
+                  Reference audit
+                </button>
+              )}
+              {state.adr && (
+                <button className={`tab ${tab === "adr" ? "on" : ""}`} onClick={() => setTab("adr")}>
+                  ADR assessment
+                </button>
+              )}
               {state.reviews && (
                 <button className={`tab ${tab === "reviews" ? "on" : ""}`} onClick={() => setTab("reviews")}>
                   Review room
@@ -326,17 +404,18 @@ export default function Home() {
               )}
             </div>
 
+            {tab === "screen" && <ScreeningView state={state} onOverride={overrideGate} />}
             {tab === "refs" && <RefAuditView state={state} />}
-            {tab === "adr" && <AdrView state={state} />}
+            {tab === "adr" && <AdrView state={state} onOverride={overrideGate} />}
             {tab === "reviews" && state.reviews && <ReviewRoomView state={state} />}
             {tab === "guide" && <GuideView state={state} />}
           </div>
         )}
 
         <p className="footer-note">
-          Review Rehearsal is an unofficial simulation for authors, built on the published CHI 2027 review process.
-          It must not be used to produce actual CHI reviews. Papers are deleted within 24 hours and never used for
-          training.
+          Review Rehearsal is an unofficial simulation for authors, built on the published CHI 2027 review process and
+          the Papers Chairs&apos; description of its AI-assisted tools. It must not be used to produce actual CHI reviews.
+          Papers are deleted within 24 hours and never used for training.
         </p>
       </main>
     </>

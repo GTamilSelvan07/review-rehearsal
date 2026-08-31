@@ -10,6 +10,10 @@ export function buildMarkdown(state: RunState): string {
     `> Unofficial CHI 2027 review simulation (run ${state.runId}). Not affiliated with ACM/SIGCHI; not a predictor of real outcomes.`
   );
   lines.push("");
+  if (p?.keywords?.length) {
+    lines.push(`**Expertise descriptors for matching:** ${p.keywords.join(" · ")}`);
+    lines.push("");
+  }
 
   if (state.refAudit) {
     const s = state.refAudit.summary;
@@ -30,22 +34,52 @@ export function buildMarkdown(state: RunState): string {
   }
 
   if (state.deskReject) {
-    lines.push(`## Desk-reject screen`);
+    const dr = state.deskReject;
+    const blocking = dr.checks.filter((c) => c.status === "flag" && c.severity === "hard");
+    lines.push(`## Desk-reject screen — ${dr.passed ? "cleared" : `surfaced for inspection (${blocking.map((c) => c.id).join(", ")})`}`);
     lines.push("");
-    for (const c of state.deskReject.checks) {
-      lines.push(`- ${c.passed ? "✓" : "✗"} **${c.name}** (${c.severity}) — ${c.evidence}`);
+    if (state.overrides?.includes("deskreject")) {
+      lines.push(`_Gate overridden by the author (as an AC would for a wrong flag); the run continued._`);
+      lines.push("");
+    }
+    for (const c of dr.checks) {
+      const mark = c.status === "pass" ? "✓" : c.status === "unverified" ? "?" : c.severity === "hard" ? "✗" : "!";
+      const label = c.status === "pass" ? "cleared" : c.status === "unverified" ? "unverified" : c.severity === "hard" ? "FLAGGED · blocking" : "flagged · discretionary";
+      lines.push(`- ${mark} **${c.id} ${c.name}** — ${label} (${c.basis})`);
+      if (c.reasoning) lines.push(`  ${c.reasoning}`);
+      if (c.evidence) lines.push(`  > ${c.evidence}`);
     }
     lines.push("");
   }
 
   if (state.adr) {
-    lines.push(`## ADR report — ${state.adr.decision === "advance" ? "Advance to full review" : "Assisted Desk Reject"}`);
+    lines.push(`## ADR assessment — ${state.adr.decision === "advance" ? "Advance to full review" : "Assisted Desk Reject"}`);
     lines.push("");
+    lines.push(`_Simulated AC judgment. In CHI 2027 the ADR is a human decision (no AI rubric tool); the SC and Papers Chairs confirm._`);
+    if (state.overrides?.includes("adr")) lines.push(`_Gate overridden by the author; the run continued to full review._`);
+    lines.push("");
+    if (state.adr.contributionTypes?.length) {
+      lines.push(`### Contribution type (tentative)`);
+      for (const t of state.adr.contributionTypes) {
+        lines.push(`- **${t.type}** — premise: ${t.premise} — appropriate validation: ${t.validationExpectation}`);
+      }
+      lines.push("");
+    }
+    if (state.adr.reviewability?.length) {
+      lines.push(`### Reviewability (advisory)`);
+      for (const r of state.adr.reviewability) {
+        lines.push(`- [${r.status.toUpperCase()}] ${r.name} — ${r.rationale}`);
+        if (r.evidence) lines.push(`  > "${r.evidence}"`);
+      }
+      lines.push("");
+    }
+    lines.push(`### ACM criteria`);
     for (const c of state.adr.criteria) {
       lines.push(`- **${c.name}: ${c.score}/5** — ${c.note}`);
       if (c.evidence) lines.push(`  > "${c.evidence}"`);
     }
     lines.push("");
+    lines.push(`### ADR flags`);
     for (const f of state.adr.flags) {
       lines.push(`- [${f.status.toUpperCase()}] ${f.name} — ${f.rationale}`);
     }

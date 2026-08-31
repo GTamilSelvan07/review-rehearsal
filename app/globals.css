@@ -544,3 +544,42 @@ ul.tight li::marker { color: var(--brand); }
   .flow-link::after { animation: none; opacity: 0; }
   .flow-detail { transition: none; }
 }
+
+/* ---- desk-reject report card ---- */
+
+.rv-card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 14px 18px;
+}
+.rv-card.rv-block { border-left: 5px solid var(--pen); }
+.rv-card.rv-soft { border-left: 5px solid var(--warn); }
+.rv-card .quote { font-style: normal; color: var(--ink); }
+details.rv-method { margin-top: 8px; }
+details.rv-method summary {
+  cursor: pointer;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--brand);
+}
+
+.kw {
+  display: inline-flex;
+  align-items: center;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 999px;
+  padding: 3px 10px;
+  background: var(--navy-soft);
+  color: var(--navy);
+}
+
+.principle {
+  border-left: 4px solid var(--brand);
+  background: var(--brand-soft);
+  border-radius: 0 8px 8px 0;
+  padding: 14px 18px;
+  font-size: 14.5px;
+  line-height: 1.55;
+}

@@ -20,6 +20,8 @@ export interface PaperInfo {
   title: string;
   abstract: string;
   subcommunity: string;
+  /** Expertise descriptors the matching tool would use (author-supplied in PCS). */
+  keywords: string[];
   pages: number;
   words: number;
   sections: { title: string; page: number | null }[];
@@ -52,19 +54,43 @@ export interface RefAudit {
   summary: { total: number; verified: number; mismatch: number; notFound: number; skipped: number };
 }
 
+export type CheckStatus = "pass" | "flag" | "unverified";
+export type CheckBasis = "deterministic" | "model" | "both";
+
 export interface DeskRejectCheck {
+  id: string;
   name: string;
-  passed: boolean;
+  status: CheckStatus;
+  /** hard = blocking (would halt the submission if confirmed); soft = discretionary/advisory */
   severity: "hard" | "soft";
+  basis: CheckBasis;
+  /** The strongest concrete evidence for the verdict (quotes, URLs, entries). */
   evidence: string;
+  /** Why the evidence supports the verdict — what the AC would read. */
+  reasoning: string;
+  /** How the check was performed, for the disclosure triangle. */
+  method: string;
+  /** Hits from the deterministic scan, when one ran. */
+  deterministicHits?: string[];
 }
 
 export interface DeskRejectResult {
   checks: DeskRejectCheck[];
+  /** false only when a blocking (hard) check is flagged. */
   passed: boolean;
 }
 
+export interface ContributionType {
+  type: string;
+  /** The visible premise for the inference — tentative, as the AC would state it. */
+  premise: string;
+  /** What form of validation is appropriate for this type. */
+  validationExpectation: string;
+}
+
 export interface AdrReport {
+  contributionTypes: ContributionType[];
+  reviewability: { name: string; status: "pass" | "borderline" | "flag"; rationale: string; evidence: string }[];
   criteria: { name: string; score: number; note: string; evidence: string }[];
   flags: { name: string; status: "pass" | "borderline" | "flag"; rationale: string; evidence: string }[];
   decision: "advance" | "adr";
@@ -156,6 +182,19 @@ export interface Guide {
   reading: ReadingItem[];
 }
 
+export type StageName =
+  | "ingest"
+  | "refaudit"
+  | "deskreject"
+  | "adr"
+  | "panel"
+  | "reviews"
+  | "meta"
+  | "guide";
+
+/** Gates the user chose to override, as the AC may override an automated flag. */
+export type GateName = "deskreject" | "adr";
+
 export interface RunState {
   runId: string;
   kind: SourceKind;
@@ -165,31 +204,22 @@ export interface RunState {
   latexText?: string;
   bibText?: string;
   paper?: PaperInfo;
-  deskReject?: DeskRejectResult;
   refAudit?: RefAudit;
+  deskReject?: DeskRejectResult;
   adr?: AdrReport;
   personas?: Persona[];
   reviews?: Review[];
   meta?: MetaReview;
   guide?: Guide;
+  overrides?: GateName[];
 }
 
-export type StageName =
-  | "ingest"
-  | "deskreject"
-  | "refaudit"
-  | "adr"
-  | "panel"
-  | "reviews"
-  | "meta"
-  | "guide";
-
 export const STAGE_ORDER: { id: StageName; label: string; detail: string }[] = [
-  { id: "ingest", label: "Ingest & normalize", detail: "Reading the paper, building the claims inventory" },
-  { id: "deskreject", label: "Desk-reject screen", detail: "Anonymization, template, completeness" },
-  { id: "refaudit", label: "Reference audit", detail: "Crossref · OpenAlex · Semantic Scholar · DBLP" },
-  { id: "adr", label: "ADR assessment", detail: "Five ACM criteria, four flags, simulated AC decision" },
-  { id: "panel", label: "Reviewer matching", detail: "Five expert personas derived from the paper" },
+  { id: "ingest", label: "Ingest & normalize", detail: "Reading the paper, claims inventory, expertise descriptors" },
+  { id: "refaudit", label: "Reference audit", detail: "Crossref · OpenAlex · Semantic Scholar · DBLP — no model involved" },
+  { id: "deskreject", label: "Desk-reject screen", detail: "The RV checks: identity, links, masked refs, template, hidden text, scope…" },
+  { id: "adr", label: "ADR assessment", detail: "Simulated AC reading: contribution type, reviewability, rubric, four flags" },
+  { id: "panel", label: "Reviewer matching", detail: "Five expert personas matched to the paper's descriptors" },
   { id: "reviews", label: "Five independent reviews", detail: "Four counted + one adversarial · draft → fact-check → sharpen" },
   { id: "meta", label: "Meta-review & decision", detail: "1AC synthesis and decision track" },
   { id: "guide", label: "Strengthening guide", detail: "Prioritized fixes and a verified reading list" },

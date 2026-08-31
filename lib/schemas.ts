@@ -2,7 +2,7 @@
 // cannot return an out-of-range score, an invalid recommendation code, or a
 // malformed form. Kept permissive on prose fields, strict on enums/ranges.
 
-import { ACM_CRITERIA, ADR_FLAGS, DESK_REJECT_CHECKS } from "./chi2027";
+import { ACM_CRITERIA, ADR_FLAGS, ADR_REVIEWABILITY, CONTRIBUTION_TYPES, DESK_REJECT_CHECKS } from "./chi2027";
 
 const str = { type: "string" } as const;
 const strArr = { type: "array", items: str } as const;
@@ -16,6 +16,7 @@ export const PAPER_SCHEMA = {
     title: str,
     abstract: str,
     subcommunity: str,
+    keywords: strArr,
     pages: { type: "integer" },
     words: { type: "integer" },
     sections: {
@@ -54,8 +55,11 @@ export const PAPER_SCHEMA = {
     },
     fullText: str,
   },
-  required: ["title", "abstract", "subcommunity", "pages", "words", "sections", "claims", "methods", "statedLimitations", "references", "fullText"],
+  required: ["title", "abstract", "subcommunity", "keywords", "pages", "words", "sections", "claims", "methods", "statedLimitations", "references", "fullText"],
 };
+
+/** The checks the model judges (RV-6 is computed in code from the reference audit). */
+export const MODEL_JUDGED_CHECK_IDS = DESK_REJECT_CHECKS.filter((c) => c.basis !== "deterministic").map((c) => c.id);
 
 export const DESK_REJECT_SCHEMA = {
   type: "object",
@@ -65,22 +69,48 @@ export const DESK_REJECT_SCHEMA = {
       items: {
         type: "object",
         properties: {
-          name: { type: "string", enum: DESK_REJECT_CHECKS.map((c) => c.name) },
-          passed: { type: "boolean" },
-          severity: { type: "string", enum: ["hard", "soft"] },
+          id: { type: "string", enum: MODEL_JUDGED_CHECK_IDS },
+          status: { type: "string", enum: ["pass", "flag", "unverified"] },
           evidence: str,
+          reasoning: str,
         },
-        required: ["name", "passed", "severity", "evidence"],
+        required: ["id", "status", "evidence", "reasoning"],
       },
     },
-    passed: { type: "boolean" },
   },
-  required: ["checks", "passed"],
+  required: ["checks"],
 };
+
+const TRI_STATUS = { type: "string", enum: ["pass", "borderline", "flag"] } as const;
 
 export const ADR_SCHEMA = {
   type: "object",
   properties: {
+    contributionTypes: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          type: { type: "string", enum: [...CONTRIBUTION_TYPES] },
+          premise: str,
+          validationExpectation: str,
+        },
+        required: ["type", "premise", "validationExpectation"],
+      },
+    },
+    reviewability: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          name: { type: "string", enum: ADR_REVIEWABILITY.map((r) => r.name) },
+          status: TRI_STATUS,
+          rationale: str,
+          evidence: str,
+        },
+        required: ["name", "status", "rationale", "evidence"],
+      },
+    },
     criteria: {
       type: "array",
       items: {
@@ -100,7 +130,7 @@ export const ADR_SCHEMA = {
         type: "object",
         properties: {
           name: { type: "string", enum: [...ADR_FLAGS] },
-          status: { type: "string", enum: ["pass", "borderline", "flag"] },
+          status: TRI_STATUS,
           rationale: str,
           evidence: str,
         },
@@ -110,7 +140,7 @@ export const ADR_SCHEMA = {
     decision: { type: "string", enum: ["advance", "adr"] },
     acNote: str,
   },
-  required: ["criteria", "flags", "decision", "acNote"],
+  required: ["contributionTypes", "reviewability", "criteria", "flags", "decision", "acNote"],
 };
 
 export const PERSONAS_SCHEMA = {

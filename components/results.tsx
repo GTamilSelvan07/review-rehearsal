@@ -1,8 +1,10 @@
 "use client";
 
-import type { RunState, Review, RefVerdict } from "@/lib/types";
-import { DECISION_LABELS, RECOMMENDATION_SCALE } from "@/lib/chi2027";
+import type { RunState, Review, RefVerdict, DeskRejectCheck, GateName } from "@/lib/types";
+import { DECISION_LABELS, RECOMMENDATION_SCALE, PCS_COMPLETENESS, WORD_THRESHOLD } from "@/lib/chi2027";
 import { useState } from "react";
+
+export type OverrideHandler = (gate: GateName) => void;
 
 function Segs({ score }: { score: number }) {
   return (
@@ -137,22 +139,220 @@ export function RefAuditView({ state }: { state: RunState }) {
   );
 }
 
+// ------------------------------------------------------- Desk-reject screen
+
+function basisLabel(basis: DeskRejectCheck["basis"]): string {
+  return basis === "deterministic" ? "Deterministic" : basis === "model" ? "Model-judged" : "Deterministic + model";
+}
+
+function CheckCard({ c }: { c: DeskRejectCheck }) {
+  const pill =
+    c.status === "pass" ? (
+      <span className="pill pass">✓ Cleared</span>
+    ) : c.status === "unverified" ? (
+      <span className="pill neutral">? Unverified</span>
+    ) : c.severity === "hard" ? (
+      <span className="pill fail">✗ Flagged · blocking</span>
+    ) : (
+      <span className="pill warn">! Flagged · discretionary</span>
+    );
+  return (
+    <div className={`rv-card ${c.status === "flag" ? (c.severity === "hard" ? "rv-block" : "rv-soft") : ""}`}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <span className="mono" style={{ fontSize: 12, color: "var(--soft)", fontWeight: 700 }}>{c.id}</span>
+        <strong style={{ fontSize: 15 }}>{c.name}</strong>
+        {pill}
+        <span className="tag effort" title="How this verdict was produced">{basisLabel(c.basis)}</span>
+      </div>
+      {c.reasoning && <p style={{ fontSize: 13.5, marginTop: 8 }}>{c.reasoning}</p>}
+      {c.evidence && (
+        <div className="quote" style={{ marginTop: 8 }}>
+          <span className="rsec" style={{ display: "block", marginBottom: 2 }}>Evidence</span>
+          {c.evidence}
+        </div>
+      )}
+      <details className="rv-method">
+        <summary>How this was checked</summary>
+        <p style={{ fontSize: 12.5, color: "var(--soft)", marginTop: 6 }}>{c.method}</p>
+        {c.deterministicHits && c.deterministicHits.length > 0 && (
+          <div style={{ marginTop: 6 }}>
+            <div className="rsec">Deterministic scan hits · {c.deterministicHits.length}</div>
+            <ul className="tight" style={{ fontSize: 12.5, color: "var(--soft)" }}>
+              {c.deterministicHits.slice(0, 12).map((h, i) => (
+                <li key={i} className="mono" style={{ fontSize: 12 }}>{h}</li>
+              ))}
+              {c.deterministicHits.length > 12 && <li>… {c.deterministicHits.length - 12} more</li>}
+            </ul>
+          </div>
+        )}
+      </details>
+    </div>
+  );
+}
+
+export function ScreeningView({ state, onOverride }: { state: RunState; onOverride?: OverrideHandler }) {
+  const dr = state.deskReject;
+  if (!dr) return null;
+  const blocking = dr.checks.filter((c) => c.status === "flag" && c.severity === "hard");
+  const discretionary = dr.checks.filter((c) => c.status === "flag" && c.severity === "soft");
+  const unverified = dr.checks.filter((c) => c.status === "unverified");
+  const cleared = dr.checks.filter((c) => c.status === "pass");
+  const overridden = state.overrides?.includes("deskreject");
+  const groups: [string, DeskRejectCheck[], string][] = [
+    ["Flagged — blocking if confirmed", blocking, "var(--pen)"],
+    ["Flagged — discretionary (never halts a submission on its own)", discretionary, "var(--warn)"],
+    ["Unverified — the AC must look by hand", unverified, "var(--soft)"],
+    ["Cleared", cleared, "var(--pass)"],
+  ];
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <div className={`banner ${dr.passed ? "good" : "bad"}`} style={{ alignItems: "flex-start" }}>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 20, fontWeight: 600, color: dr.passed ? "#1c5940" : "var(--pen)" }}>
+            {dr.passed ? "Cleared the desk-reject screen" : "Surfaced for desk-reject inspection"}
+          </div>
+          <div style={{ fontSize: 13.5, color: "var(--soft)", marginTop: 4, lineHeight: 1.55 }}>
+            {dr.passed ? (
+              <>
+                No blocking check was flagged
+                {discretionary.length ? ` — ${discretionary.length} discretionary finding${discretionary.length > 1 ? "s" : ""} below for you to fix anyway` : ""}
+                {unverified.length ? `; ${unverified.length} check${unverified.length > 1 ? "s" : ""} could not be verified from the document` : ""}.
+              </>
+            ) : (
+              <>
+                {blocking.length} blocking check{blocking.length > 1 ? "s" : ""} flagged:{" "}
+                <strong>{blocking.map((c) => `${c.id} ${c.name}`).join(", ")}</strong>. This is what the real CHI 2027 tool
+                does — it surfaces a candidate with evidence and reasoning; it never rejects. The AC then reads the paper
+                and this report, forms an independent judgment, and the Subcommittee Chair confirms before any decision
+                reaches the authors. A confirmed flag ends the submission, which is why the rehearsal stopped here.
+                {overridden && " You overrode this gate, as an AC would for a wrong flag, and the run continued."}
+              </>
+            )}
+          </div>
+          {!dr.passed && !overridden && onOverride && (
+            <div style={{ marginTop: 12, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+              <button className="btn ghost small" onClick={() => onOverride("deskreject")}>
+                The flag is wrong — override as the AC and continue to full review
+              </button>
+              <span style={{ fontSize: 12.5, color: "var(--soft)" }}>
+                Use this when you know the finding is a false positive (e.g. a deliberately non-anonymized early draft).
+              </span>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {groups.map(([label, items, color]) =>
+        items.length ? (
+          <div key={label} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <div className="cardlbl" style={{ color }}>
+              {label} · {items.length}
+            </div>
+            {items.map((c) => (
+              <CheckCard key={c.id} c={c} />
+            ))}
+          </div>
+        ) : null
+      )}
+
+      <div className="card" style={{ padding: "16px 20px" }}>
+        <div className="cardlbl" style={{ marginBottom: 8 }}>Checked in PCS, not here</div>
+        <p style={{ fontSize: 13, color: "var(--soft)", marginBottom: 8 }}>
+          The real screening also runs a completeness check on submission metadata and a duplicate-submission check
+          (RV-9) across the whole cycle. This rehearsal only sees your manuscript, so confirm these yourself:
+        </p>
+        <ul className="tight" style={{ fontSize: 13.5 }}>
+          {PCS_COMPLETENESS.map((item) => (
+            <li key={item}>{item}</li>
+          ))}
+        </ul>
+      </div>
+    </div>
+  );
+}
+
 // ------------------------------------------------------------------ ADR view
 
-export function AdrView({ state }: { state: RunState }) {
+function triPill(status: "pass" | "borderline" | "flag") {
+  return (
+    <span className={`pill ${status === "pass" ? "pass" : status === "borderline" ? "warn" : "fail"}`}>
+      {status === "pass" ? "Pass" : status === "borderline" ? "Borderline" : "Flag"}
+    </span>
+  );
+}
+
+export function AdrView({ state, onOverride }: { state: RunState; onOverride?: OverrideHandler }) {
   const adr = state.adr;
   if (!adr) return null;
   const advance = adr.decision === "advance";
+  const overridden = state.overrides?.includes("adr");
+  const words = state.paper?.words ?? 0;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <div className={`banner ${advance ? "good" : "bad"}`}>
-        <div>
+      <div className={`banner ${advance ? "good" : "bad"}`} style={{ alignItems: "flex-start" }}>
+        <div style={{ flex: 1 }}>
           <div style={{ fontSize: 20, fontWeight: 600, color: advance ? "#1c5940" : "var(--pen)" }}>
             {advance ? "Advance to full review" : "Assisted Desk Reject"}
           </div>
-          <div style={{ fontSize: 13.5, color: "var(--soft)", marginTop: 2 }}>
-            Simulated AC decision. In the real process, 50–60% of submissions advance.
+          <div style={{ fontSize: 13.5, color: "var(--soft)", marginTop: 4, lineHeight: 1.55 }}>
+            Simulated AC judgment. In CHI 2027 the ADR is a <strong>human</strong> decision — no AI rubric tool is used;
+            “Assisted” means the AC and SC assisting the Papers Chairs. The SC and Papers Chairs confirm every ADR, and
+            50–60% of submissions advance.
+            {overridden && " You overrode this gate and the run continued to full review."}
           </div>
+          {!advance && !overridden && onOverride && (
+            <div style={{ marginTop: 12 }}>
+              <button className="btn ghost small" onClick={() => onOverride("adr")}>
+                Override as the SC would — send it to full review anyway
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 16 }}>
+        <div className="card" style={{ padding: "18px 22px" }}>
+          <div className="cardlbl" style={{ marginBottom: 4 }}>Contribution type · tentative</div>
+          <p style={{ fontSize: 12.5, color: "var(--soft)", marginBottom: 8 }}>
+            Inferred before any quality judgment, with the premise visible — validation expectations depend on it.
+          </p>
+          {(adr.contributionTypes ?? []).map((t, i) => (
+            <div key={i} style={{ padding: "10px 0", borderBottom: "1px solid var(--panel)" }}>
+              <div style={{ fontSize: 14, fontWeight: 600 }}>{t.type}</div>
+              <div style={{ fontSize: 13, color: "var(--soft)", marginTop: 2 }}>
+                <em>Premise:</em> {t.premise}
+              </div>
+              <div style={{ fontSize: 13, marginTop: 4 }}>
+                <em>Appropriate validation:</em> {t.validationExpectation}
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className="card" style={{ padding: "18px 22px" }}>
+          <div className="cardlbl" style={{ marginBottom: 4 }}>Reviewability · advisory</div>
+          <p style={{ fontSize: 12.5, color: "var(--soft)", marginBottom: 8 }}>
+            The lenses the CHI 2027 rubric tool was designed around. They inform the AC&apos;s reading; they are not
+            decision rules. Body ≈ {words.toLocaleString()} words{" "}
+            {words > WORD_THRESHOLD ? (
+              <span style={{ color: "var(--pen)", fontWeight: 700 }}>— above the {WORD_THRESHOLD.toLocaleString()}-word threshold; the length must be justified</span>
+            ) : (
+              <span>(threshold {WORD_THRESHOLD.toLocaleString()})</span>
+            )}
+            .
+          </p>
+          {(adr.reviewability ?? []).map((r) => (
+            <div key={r.name} style={{ padding: "10px 0", borderBottom: "1px solid var(--panel)" }}>
+              <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+                {triPill(r.status)}
+                <div>
+                  <div style={{ fontSize: 14, fontWeight: 600 }}>{r.name}</div>
+                  <div style={{ fontSize: 13, color: "var(--soft)", marginTop: 2 }}>{r.rationale}</div>
+                  {r.evidence && <div className="quote">“{r.evidence}”</div>}
+                </div>
+              </div>
+            </div>
+          ))}
         </div>
       </div>
 
@@ -172,13 +372,11 @@ export function AdrView({ state }: { state: RunState }) {
           ))}
         </div>
         <div className="card" style={{ padding: "18px 22px" }}>
-          <div className="cardlbl" style={{ marginBottom: 8 }}>ADR flags</div>
+          <div className="cardlbl" style={{ marginBottom: 8 }}>ADR flags · decision-driving</div>
           {adr.flags.map((f) => (
             <div key={f.name} style={{ padding: "10px 0", borderBottom: "1px solid var(--panel)" }}>
               <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
-                <span className={`pill ${f.status === "pass" ? "pass" : f.status === "borderline" ? "warn" : "fail"}`}>
-                  {f.status === "pass" ? "Pass" : f.status === "borderline" ? "Borderline" : "Flag"}
-                </span>
+                {triPill(f.status)}
                 <div>
                   <div style={{ fontSize: 14, fontWeight: 600 }}>{f.name}</div>
                   <div style={{ fontSize: 13, color: "var(--soft)", marginTop: 2 }}>{f.rationale}</div>
@@ -196,20 +394,10 @@ export function AdrView({ state }: { state: RunState }) {
         </div>
       </div>
 
-      {state.deskReject && (
-        <div className="card" style={{ padding: "18px 22px" }}>
-          <div className="cardlbl" style={{ marginBottom: 10 }}>
-            Desk-reject checks · {state.deskReject.checks.filter((c) => c.passed).length} of {state.deskReject.checks.length} passed
-          </div>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-            {state.deskReject.checks.map((c) => (
-              <span key={c.name} className={`pill ${c.passed ? "pass" : c.severity === "hard" ? "fail" : "warn"}`} title={c.evidence}>
-                {c.name} {c.passed ? "✓" : "✗"}
-              </span>
-            ))}
-          </div>
-        </div>
-      )}
+      <p style={{ fontSize: 12.5, color: "var(--soft)", textAlign: "center" }}>
+        A model-generated concern is not a finding of fact. Every flag above carries a verbatim quote so you can check
+        it against your own paper — exactly what the AC would be asked to do.
+      </p>
     </div>
   );
 }

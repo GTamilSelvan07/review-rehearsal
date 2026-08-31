@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { TopBar, Ribbon } from "@/components/chrome";
+import { DESK_REJECT_CHECKS } from "@/lib/chi2027";
 
 interface FlowStage {
   id: string;
@@ -14,21 +15,31 @@ interface FlowStage {
   dropNote?: string;
 }
 
+const AI_POST_URL =
+  "https://chi2027.acm.org/2026/08/29/ai-assisted-tools-in-the-chi-2027-papers-review-process-what-they-do-what-they-do-not-do-and-how-humans-remain-responsible/";
+
 const STAGES: FlowStage[] = [
   {
     id: "submit",
     badge: "1",
-    title: "Submission",
-    sub: "September 10, 2026 · anonymized, ACM template",
+    title: "Submission & completeness check",
+    sub: "September 10, 2026 · anonymized, ACM single-column template · rule-based metadata check",
     detail: (
       <>
         <p>
           Authors submit an anonymized paper in the ACM single-column manuscript format via PCS, declaring the
-          best-fitting subcommunity. Length should be proportionate to the contribution.
+          best-fitting subcommunity. Length should be proportionate to the contribution; above 12,000 words it must be
+          justified or the paper is desk-rejectable.
         </p>
         <p>
           Anonymization is strict: no author names, no identifying acknowledgments or links, and your own prior work
-          cited in the third person.
+          cited in the third person — never masked as “Anonymous”.
+        </p>
+        <p>
+          <strong>Tool 1 — completeness check.</strong> A deterministic, rule-based check of the PCS metadata (no
+          model, no manuscript reading): are the review-responsibility slots declared, do named reviewer-authors have
+          valid ORCIDs and DBLP identifiers, and are there enough expertise descriptors for matching? Authors get a
+          report and a window to correct it before screening begins.
         </p>
       </>
     ),
@@ -37,17 +48,49 @@ const STAGES: FlowStage[] = [
     id: "desk",
     badge: "2",
     title: "Desk-reject screening",
-    sub: "Papers Chairs · automatic flagging + manual AC/SC checks",
+    sub: "Tool 3 surfaces candidates with evidence → AC inspects → SC confirms",
     gate: true,
-    dropNote: "Incomplete, non-anonymous, off-template, or out-of-scope papers are removed",
+    dropNote: "Confirmed violations — non-anonymous, off-template, not a paper, out of scope, duplicate — are removed",
     detail: (
       <>
         <p>
-          Before anyone reviews the science, papers are screened for mechanical violations: broken anonymization,
-          placeholder or incomplete content, wrong template, undeclared concurrent submissions, missing HCI framing,
-          non-English text, or excessive length without justification.
+          The only AI-assisted tool in CHI 2027 that reads manuscripts. It surfaces <em>candidate</em> submissions for
+          human inspection against the desk-reject grounds — incomplete, non-anonymous, wrong template, undeclared
+          concurrent submission, out of scope, unreviewable, or in breach of ACM policy — as a report card with
+          evidence, reasoning, and a note of whether each finding is deterministic or model-confirmed.{" "}
+          <strong>It issues no decisions.</strong>
         </p>
-        <p>Desk rejection can happen at any point in the process, not only at the start.</p>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", margin: "8px 0" }}>
+          {DESK_REJECT_CHECKS.map((c) => (
+            <span key={c.id} className={`pill ${c.severity === "hard" ? "slate" : "warn"}`} title={c.prompt}>
+              {c.id} · {c.name}
+            </span>
+          ))}
+          <span className="pill neutral" title="Needs the whole PCS corpus — not run by Review Rehearsal">
+            RV-9 · Duplicates
+          </span>
+        </div>
+        <p style={{ fontSize: 12.5, color: "var(--soft)" }}>
+          Amber checks are discretionary and never halt a submission on their own — in CHI 2026, four accepted papers
+          carried masked references and seven carried compilation defects.
+        </p>
+        <p>
+          <strong>The human chain.</strong> Tool surfaces a candidate → the AC reads the paper and the report and forms
+          an independent judgment → the SC confirms before any desk rejection is issued. Human disagreement overrides
+          the flag. Desk rejection can happen at any point in the process, not only at the start.
+        </p>
+        <p>
+          <strong>How well it works</strong> (tested on the 6,286 CHI 2026 submissions): all 19 papers flagged for a
+          two-column layout were real desk-rejects; 26 of 71 anonymization breaches were caught with no false positives
+          on 250 accepted papers — the misses were first-person self-citations, figures, and supplementary files; the
+          scope check cleared every one of 601 accepted papers but catches only about a fifth of borderline cases, by
+          design. Hidden text aimed at AI readers is detected from the PDF&apos;s rendering instructions and scrubbed
+          from every other check — zero injection attacks were found in the 2026 corpus.
+        </p>
+        <p style={{ fontSize: 12.5, color: "var(--soft)" }}>
+          Review Rehearsal runs the same check list on your paper, labels each finding deterministic or model-judged,
+          and lets you override a flag the way an AC would.
+        </p>
       </>
     ),
   },
@@ -55,25 +98,40 @@ const STAGES: FlowStage[] = [
     id: "adr",
     badge: "3",
     title: "Assisted Desk Reject (ADR)",
-    sub: "AI-assisted rubric report → AC decides → SC + Papers Chairs confirm",
+    sub: "A human AC judgment → SC + Papers Chairs confirm · no AI rubric tool is used",
     gate: true,
     pct: "50–60% advance",
-    dropNote: "Papers without a realistic path to acceptance stop here, with a written AC meta-review (~Oct 25)",
+    dropNote: "Papers without a realistic path to acceptance stop here, with a written AC note (~Oct 25)",
     detail: (
       <>
         <p>
-          New for CHI 2027. An automated tool produces a preliminary report against a method-agnostic rubric built on
-          the five ACM criteria — <strong>Originality, Correctness, Novelty, Importance, Clarity of Exposition</strong>{" "}
-          — focused on whether claims align with the evidence supporting them.
+          New for CHI 2027. ADR is ACM&apos;s term for a rejection on the judgment of the editor or sub-editor — here
+          the AC and SC — that a paper is out of scope or so far from acceptable that external reviews are unnecessary.
+          The “Assisted” refers to the AC and SC assisting the Papers Chairs, <strong>not to any AI</strong>.
         </p>
         <p>
-          The AC reads the paper and the report independently and decides; the Subcommunity Chair and Papers Chairs
-          confirm every ADR outcome. Flags include: grossly insufficient literature review, methodological detail,
-          or data to support claims — or a disproportionately small HCI contribution for the length.
+          The AC reads the paper against a method-agnostic rubric built on the five ACM criteria —{" "}
+          <strong>Originality, Correctness, Novelty, Importance, Clarity of Exposition</strong> — and four flags:
+          grossly insufficient literature review, methodological detail, or data to support the claims, or a
+          disproportionately small HCI contribution for the length. The SC and Papers Chairs confirm every ADR.
         </p>
         <p>
-          Only papers with a realistic path to acceptance — a working target of 50–60% of submissions — advance to
-          full review. Full peer review is treated as a scarce community resource.
+          <strong>The rubric tool that was not deployed.</strong> An AI-assisted rubric report (Tool 4) was built and
+          tested for this stage, but the Papers Chairs decided not to use it in CHI 2027 — there was no time for public
+          community testing before the deadline. Its design still tells you what the rubric values: reason about the
+          contribution type <em>before</em> applying validation expectations (an artifact, a qualitative study, and a
+          controlled experiment warrant different ones); check reviewability — enough grounding to assess, claims
+          supported, self-contained, HCI literature engaged, length justified; and never score originality or novelty
+          automatically, because that proved unreliable. Its designers chose to under-flag rather than make quality
+          accusations the evidence could not support.
+        </p>
+        <p>
+          Only papers with a realistic path to acceptance — a working target of 50–60% of submissions — advance.
+          Full peer review is treated as a scarce community resource.
+        </p>
+        <p style={{ fontSize: 12.5, color: "var(--soft)" }}>
+          Review Rehearsal simulates the AC&apos;s reading using those design principles: contribution type first,
+          then reviewability, then the rubric and flags, with a verbatim quote behind every judgment.
         </p>
       </>
     ),
@@ -82,14 +140,20 @@ const STAGES: FlowStage[] = [
     id: "review",
     badge: "4",
     title: "Full peer review",
-    sub: "1AC + four external reviewers, matched by expertise descriptors",
+    sub: "1AC + four external reviewers · matching tool suggests, ACs decide",
     detail: (
       <>
         <p>
-          The AC selects at least four external reviewers, assisted by a matching system that compares paper
-          descriptors with reviewer expertise. Each reviewer independently files a structured form: a contribution
-          statement, an expertise self-rating (1–4), written assessments of the five ACM criteria, an itemized list
-          of required revisions, and a recommendation:
+          <strong>Tool 2 — matching.</strong> A matching system suggests ACs and reviewers by comparing the paper&apos;s
+          author-supplied expertise descriptors with reviewer profiles, weighting rarer descriptors higher and
+          respecting conflicts and workload. It reads no manuscript and assigns no one: the AC accepts, rejects, or
+          replaces every suggestion and must ensure the team covers both the topic and the methods. Simulations found
+          about eight descriptors per profile gives effective matching.
+        </p>
+        <p>
+          Each reviewer independently files a structured form: a contribution statement, an expertise self-rating
+          (1–4), written assessments of the five ACM criteria, an itemized list of required revisions, and a
+          recommendation:
         </p>
         <div className="flow-fan">
           <div className="flow-reviewer"><strong>R1</strong>Domain expert</div>
@@ -106,6 +170,11 @@ const STAGES: FlowStage[] = [
           The five-point recommendation scale: <strong>A</strong> (Accept with Minor Revisions), <strong>ARR</strong>{" "}
           (A or R&amp;R), <strong>RR</strong> (Revise &amp; Resubmit), <strong>RRX</strong> (Reject or R&amp;R),{" "}
           <strong>X</strong> (Reject).
+        </p>
+        <p style={{ fontSize: 12.5, color: "var(--soft)" }}>
+          No AI tool reads your paper at this stage. ACM policy lets reviewers use off-the-shelf LLMs only where
+          confidentiality is preserved; CHI&apos;s answer to that is a tailored, safeguarded screening tool rather than
+          reviewers pasting papers into chatbots.
         </p>
       </>
     ),
@@ -148,8 +217,35 @@ const BRANCHES = [
   },
 ];
 
+const TOOLS = [
+  {
+    name: "Tool 1 · Completeness check",
+    reads: "PCS metadata only",
+    does: "Verifies review-responsibility slots, ORCID/DBLP identifiers, and enough keywords for matching. Rule-based; no model.",
+    not: "Does not evaluate research quality, novelty, methods, or contribution.",
+  },
+  {
+    name: "Tool 2 · Matching",
+    reads: "Descriptors and reviewer profiles",
+    does: "Suggests suitable ACs and reviewers, weighting rare expertise higher, respecting conflicts and workload.",
+    not: "Does not read manuscripts, does not assign anyone — ACs accept, reject, or replace every suggestion.",
+  },
+  {
+    name: "Tool 3 · Desk-reject support",
+    reads: "The full manuscript",
+    does: "Surfaces candidate violations (identity, links, masked refs, template, document type, references, language, build defects, duplicates, hidden text, scope) with evidence and reasoning.",
+    not: "Does not reject, does not judge scientific soundness, cannot see figures or supplementary files, cannot check IRB compliance or concurrent submissions elsewhere.",
+  },
+  {
+    name: "Tool 4 · ADR rubric report",
+    reads: "— not deployed",
+    does: "Built and tested, then withheld from CHI 2027 for lack of time for public community testing. Kept in the record for transparency.",
+    not: "Produces nothing in this cycle. The ADR is a human AC judgment confirmed by the SC and Papers Chairs.",
+  },
+];
+
 export default function ProcessPage() {
-  const [open, setOpen] = useState<string | null>("adr");
+  const [open, setOpen] = useState<string | null>("desk");
 
   return (
     <>
@@ -162,8 +258,9 @@ export default function ProcessPage() {
           </div>
           <h1 style={{ fontSize: "clamp(28px, 4.5vw, 40px)", marginTop: 8 }}>The CHI 2027 review process</h1>
           <p style={{ fontSize: 15.5, color: "var(--soft)", marginTop: 10 }}>
-            Every paper travels this pipeline. Click any stage to see what happens inside it — Review Rehearsal
-            simulates each one. Based on the published CHI 2027 papers review process.
+            Every paper travels this pipeline. Click any stage to see what happens inside it, what is automated, and
+            who decides — Review Rehearsal simulates each one. Based on the published CHI 2027 papers review process and
+            the Papers Chairs&apos; account of its AI-assisted tools.
           </p>
         </div>
 
@@ -237,6 +334,54 @@ export default function ProcessPage() {
           </div>
         </div>
 
+        <section style={{ maxWidth: 880, margin: "44px auto 0" }}>
+          <div style={{ textAlign: "center", marginBottom: 18 }}>
+            <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", color: "var(--brand)" }}>
+              Assistance is not authority
+            </div>
+            <h2 style={{ fontSize: 26, marginTop: 6 }}>What the AI tools do — and what they don&apos;t</h2>
+          </div>
+          <div className="principle" style={{ marginBottom: 18 }}>
+            “No AI system decides whether a CHI 2027 paper is accepted or rejected. … Tools can check, search, flag,
+            suggest, produce reports. People decide.” — CHI 2027 Papers Chairs
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 14 }}>
+            {TOOLS.map((t) => (
+              <div key={t.name} className="card" style={{ padding: "16px 18px" }}>
+                <div style={{ fontSize: 15, fontWeight: 700 }}>{t.name}</div>
+                <div className="mono" style={{ fontSize: 11.5, color: "var(--soft)", margin: "2px 0 8px" }}>Reads: {t.reads}</div>
+                <p style={{ fontSize: 13.5 }}>{t.does}</p>
+                <p style={{ fontSize: 13, color: "var(--pen)", marginTop: 6 }}>{t.not}</p>
+              </div>
+            ))}
+          </div>
+          <div className="card" style={{ padding: "18px 22px", marginTop: 18 }}>
+            <div className="cardlbl" style={{ marginBottom: 8 }}>How Review Rehearsal differs — on purpose</div>
+            <ul className="tight" style={{ fontSize: 14 }}>
+              <li>
+                A model plays every role here — screener, AC, four reviewers, the adversarial fifth, and the 1AC. CHI
+                does that for none of them. This is a rehearsal for authors, not a review, and its output must never be
+                submitted to PCS as one.
+              </li>
+              <li>
+                Where the real process is deterministic, so is this one: reference integrity comes from Crossref,
+                OpenAlex, Semantic Scholar, and DBLP; masked references, build defects, and AI-directed text are found
+                by pattern scans; decision tracks are computed from the threshold rules in code. The model never
+                decides whether a citation exists.
+              </li>
+              <li>
+                Every flag carries a verbatim quote, and both gates can be overridden — the same “human disagreement
+                overrides the flag” rule the real AC works under. A model-generated concern is not a finding of fact.
+              </li>
+              <li>
+                Like CHI&apos;s own tools, nothing you upload trains a model; unlike a published paper, it is deleted
+                within 24 hours. CHI&apos;s advice applies here too: do not submit content you would not be comfortable
+                seeing processed by AI once published.
+              </li>
+            </ul>
+          </div>
+        </section>
+
         <div style={{ textAlign: "center", marginTop: 36 }}>
           <a className="btn primary" href="/" style={{ textDecoration: "none" }}>
             Rehearse this pipeline with your paper
@@ -244,8 +389,11 @@ export default function ProcessPage() {
         </div>
 
         <p className="footer-note">
-          Summarized from the published CHI 2027 papers review process (chi2027.acm.org). Review Rehearsal is an
-          unofficial author-side simulation, not affiliated with ACM or SIGCHI.
+          Summarized from the published CHI 2027 papers review process and the Papers Chairs&apos; post{" "}
+          <a href={AI_POST_URL} target="_blank" rel="noreferrer">
+            “AI-assisted tools in the CHI 2027 papers review process”
+          </a>{" "}
+          (29 Aug 2026). Review Rehearsal is an unofficial author-side simulation, not affiliated with ACM or SIGCHI.
         </p>
       </main>
     </>
