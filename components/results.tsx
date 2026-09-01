@@ -557,6 +557,17 @@ export function AdrView({ state, onOverride }: { state: RunState; onOverride?: O
 
 // ------------------------------------------------------------- Review room
 
+function evidenceLabel(type: Review["majorIssues"][number]["evidenceType"] | undefined): string {
+  if (!type) return "Evidence type unavailable";
+  return type === "textual" ? "Text" : type === "table" ? "Table" : type === "figure" ? "Figure" : type === "database" ? "Database" : type === "inferred" ? "Inference" : "Unverified";
+}
+
+function issueVerification(m: Review["majorIssues"][number]) {
+  if (m.factChecked === true || m.quoteVerified === true) return <span className="pill pass">✓ Evidence verified</span>;
+  if (m.factChecked === false || m.quoteVerified === false) return <span className="pill warn">! Evidence needs checking</span>;
+  return <span className="pill neutral">Evidence status unavailable</span>;
+}
+
 function ReviewCard({ r }: { r: Review }) {
   const rec = RECOMMENDATION_SCALE.find((x) => x.code === r.recommendation);
   return (
@@ -586,7 +597,11 @@ function ReviewCard({ r }: { r: Review }) {
         <ul className="tight" style={{ fontSize: 13.5 }}>
           {r.majorIssues.map((m, i) => (
             <li key={i}>
-              <strong>{m.title}</strong> <span className="mono" style={{ fontSize: 11.5, color: "var(--soft)" }}>{m.anchor}</span>
+              <strong>{m.title}</strong>{" "}
+              <span className={`pill ${m.severity === "major" ? "fail" : m.severity === "moderate" ? "warn" : "neutral"}`}>
+                {m.severity ?? "issue"}
+              </span>{" "}
+              {issueVerification(m)}
             </li>
           ))}
         </ul>
@@ -616,16 +631,25 @@ function ReviewCard({ r }: { r: Review }) {
           </div>
           {r.majorIssues.map((m, i) => (
             <div key={i}>
-              <div className="rsec">Major issue {i + 1} — {m.title}</div>
+              <div className="rsec" style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                <span>Issue {i + 1} — {m.title}</span>
+                <span className={`pill ${m.severity === "major" ? "fail" : m.severity === "moderate" ? "warn" : "neutral"}`}>
+                  {m.severity ?? "severity unavailable"}
+                </span>
+                <span className="pill neutral">{evidenceLabel(m.evidenceType)}</span>
+                <span className="pill neutral">{m.confidence ?? "confidence unavailable"} confidence</span>
+                {issueVerification(m)}
+              </div>
               <p>{m.argument}</p>
               {m.quote && (
                 <div className="quote">
                   “{m.quote}” — {m.anchor}
-                  {m.quoteVerified === false && (
-                    <span className="pill warn" style={{ marginLeft: 8 }}>quote not verified in text</span>
-                  )}
                 </div>
               )}
+              <div style={{ display: "grid", gap: 6, marginTop: 8, paddingLeft: 12, borderLeft: "2px solid var(--panel)" }}>
+                {m.whyItMatters && <div><strong>Why it matters:</strong> {m.whyItMatters}</div>}
+                {m.revision && <div><strong>Concrete revision:</strong> {m.revision}</div>}
+              </div>
             </div>
           ))}
           {r.criteria.map((c) => (
@@ -670,11 +694,19 @@ function ReviewCard({ r }: { r: Review }) {
                         {f.quote && (
                           <div className="quote">
                             “{f.quote}” — {f.anchor}
-                            {f.quoteVerified === false && (
-                              <span className="pill warn" style={{ marginLeft: 8 }}>quote not verified in text</span>
-                            )}
                           </div>
                         )}
+                        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 5 }}>
+                          <span className="pill neutral">{evidenceLabel(f.evidenceType)}</span>
+                          <span className="pill neutral">{f.confidence ?? "confidence unavailable"} confidence</span>
+                          {f.factChecked === true || f.quoteVerified === true ? (
+                            <span className="pill pass">✓ Evidence verified</span>
+                          ) : (
+                            <span className="pill warn">! Evidence needs checking</span>
+                          )}
+                        </div>
+                        {f.whyItMatters && <div style={{ marginTop: 5 }}><strong>Why it matters:</strong> {f.whyItMatters}</div>}
+                        {f.revision && <div style={{ marginTop: 5 }}><strong>Concrete revision:</strong> {f.revision}</div>}
                       </div>
                     ))}
                   </div>

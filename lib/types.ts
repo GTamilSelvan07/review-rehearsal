@@ -150,20 +150,35 @@ export interface Matching {
 
 export type Recommendation = "A" | "ARR" | "RR" | "RRX" | "X";
 
+export type ReviewEvidenceType = "textual" | "table" | "figure" | "database" | "inferred" | "unverified";
+export type ReviewConfidence = "high" | "medium" | "low";
+export type ReviewSeverity = "major" | "moderate" | "minor";
+
 export interface MajorIssue {
   title: string;
   argument: string;
   quote: string;
   anchor: string;
+  evidenceType: ReviewEvidenceType;
+  severity: ReviewSeverity;
+  confidence: ReviewConfidence;
+  whyItMatters: string;
+  revision: string;
   quoteVerified?: boolean;
+  factChecked?: boolean;
 }
 
 export interface AuditFinding {
   issue: string;
-  severity: "major" | "moderate" | "minor";
+  severity: ReviewSeverity;
   quote: string;
   anchor: string;
+  evidenceType: ReviewEvidenceType;
+  confidence: ReviewConfidence;
+  whyItMatters: string;
+  revision: string;
   quoteVerified?: boolean;
+  factChecked?: boolean;
 }
 
 export interface SectionAudit {

@@ -8,6 +8,9 @@ import { KEYWORD_RULES } from "./keywords";
 const str = { type: "string" } as const;
 const strArr = { type: "array", items: str } as const;
 const score15 = { type: "integer", minimum: 1, maximum: 5 } as const;
+const evidenceType = { type: "string", enum: ["textual", "table", "figure", "database", "inferred", "unverified"] } as const;
+const confidence = { type: "string", enum: ["high", "medium", "low"] } as const;
+const severity = { type: "string", enum: ["major", "moderate", "minor"] } as const;
 
 const CRITERIA_NAMES = ACM_CRITERIA.map((c) => c.name);
 
@@ -208,11 +211,15 @@ const AUDIT_ITEMS = {
           type: "object",
           properties: {
             issue: str,
-            severity: { type: "string", enum: ["major", "moderate", "minor"] },
+            severity,
             quote: str,
             anchor: str,
+            evidenceType,
+            confidence,
+            whyItMatters: str,
+            revision: str,
           },
-          required: ["issue", "severity", "quote", "anchor"],
+          required: ["issue", "severity", "quote", "anchor", "evidenceType", "confidence", "whyItMatters", "revision"],
         },
       },
     },
@@ -249,8 +256,18 @@ export function reviewSchema(adversarial: boolean) {
       type: "array",
       items: {
         type: "object",
-        properties: { title: str, argument: str, quote: str, anchor: str },
-        required: ["title", "argument", "quote", "anchor"],
+        properties: {
+          title: str,
+          argument: str,
+          quote: str,
+          anchor: str,
+          evidenceType,
+          severity,
+          confidence,
+          whyItMatters: str,
+          revision: str,
+        },
+        required: ["title", "argument", "quote", "anchor", "evidenceType", "severity", "confidence", "whyItMatters", "revision"],
       },
     },
     minorIssues: strArr,

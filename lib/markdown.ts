@@ -156,8 +156,10 @@ export function buildMarkdown(state: RunState): string {
     lines.push("");
     lines.push(`### Major issues`);
     r.majorIssues.forEach((m, i) => {
-      lines.push(`${i + 1}. **${m.title}** (${m.anchor}) — ${m.argument}`);
+      lines.push(`${i + 1}. **${m.title}** [${m.severity ?? "severity unavailable"}; ${m.evidenceType ?? "evidence type unavailable"}; ${m.confidence ?? "confidence unavailable"} confidence; ${m.factChecked === true || m.quoteVerified === true ? "evidence verified" : "evidence needs checking"}] (${m.anchor}) — ${m.argument}`);
       if (m.quote) lines.push(`   > "${m.quote}"`);
+      if (m.whyItMatters) lines.push(`   - **Why it matters:** ${m.whyItMatters}`);
+      if (m.revision) lines.push(`   - **Concrete revision:** ${m.revision}`);
     });
     lines.push("");
     if (r.minorIssues.length) {
@@ -180,8 +182,10 @@ export function buildMarkdown(state: RunState): string {
       for (const sec of r.sectionAudit) {
         lines.push(`**${sec.section}**`);
         sec.findings.forEach((f) => {
-          lines.push(`- [${f.severity.toUpperCase()}] ${f.issue} (${f.anchor})`);
+          lines.push(`- [${f.severity.toUpperCase()}] ${f.issue} [${f.evidenceType ?? "evidence type unavailable"}; ${f.confidence ?? "confidence unavailable"} confidence; ${f.factChecked === true || f.quoteVerified === true ? "evidence verified" : "evidence needs checking"}] (${f.anchor})`);
           if (f.quote) lines.push(`  > "${f.quote}"`);
+          if (f.whyItMatters) lines.push(`  - **Why it matters:** ${f.whyItMatters}`);
+          if (f.revision) lines.push(`  - **Concrete revision:** ${f.revision}`);
         });
         lines.push("");
       }

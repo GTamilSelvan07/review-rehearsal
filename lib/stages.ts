@@ -451,6 +451,8 @@ ${SCRUTINY_CHECKLIST}
 Rules:
 - Every finding needs a VERBATIM quote from the paper and an anchor like "§4.1, p.6". No unanchored findings.
 - Severity: "major" = could justify rejection on its own; "moderate" = must be fixed before acceptance; "minor" = worth fixing.
+- Add evidenceType (textual, table, figure, database, inferred, or unverified), confidence (high, medium, or low), whyItMatters (the consequence for the paper), and revision (a concrete author action) to every finding.
+- Use inferred or unverified only when the manuscript cannot directly establish the concern. Never present an inference as a verified fact.
 - Report only REAL findings. A section with no genuine problems gets an empty findings list — padding destroys your credibility.
 - Do not report limitations the authors already state themselves: ${JSON.stringify(p.statedLimitations)}. Engaging one is allowed only as: the authors acknowledge X; the unexamined consequence is Y.
 - Never invent citations: name missing-literature TOPICS only.
@@ -499,7 +501,7 @@ Your known bias (let it subtly shape emphasis, not fairness): ${persona.biases}$
   "summary": string,                 // the paper in YOUR OWN words, 2-4 sentences
   "contribution": string,            // what it contributes to HCI and how significant
   "criteria": [{ "name": one of ${JSON.stringify(ACM_CRITERIA.map((c) => c.name))}, "score": 1-5, "assessment": string }],  // all five
-  "majorIssues": [{ "title": string, "argument": string, "quote": string, "anchor": string }],  // quote must be VERBATIM from the paper; anchor like "§4.1, p.6"
+  "majorIssues": [{ "title": string, "argument": string, "quote": string, "anchor": string, "evidenceType": "textual" | "table" | "figure" | "database" | "inferred" | "unverified", "severity": "major" | "moderate" | "minor", "confidence": "high" | "medium" | "low", "whyItMatters": string, "revision": string }],  // quote must be VERBATIM from the paper; anchor like "§4.1, p.6"
   "minorIssues": string[],
   "questions": string[],             // for the authors to answer in revision
   "revisions": string[],             // concrete, itemized required changes
@@ -507,7 +509,7 @@ Your known bias (let it subtly shape emphasis, not fairness): ${persona.biases}$
   "committeeComments": string${
     adversarial
       ? `,       // candid, authors will not see this
-  "sectionAudit": [{ "section": string, "findings": [{ "issue": string, "severity": "major" | "moderate" | "minor", "quote": string, "anchor": string }] }]   // your full section-by-section audit, cleaned up`
+  "sectionAudit": [{ "section": string, "findings": [{ "issue": string, "severity": "major" | "moderate" | "minor", "quote": string, "anchor": string, "evidenceType": "textual" | "table" | "figure" | "database" | "inferred" | "unverified", "confidence": "high" | "medium" | "low", "whyItMatters": string, "revision": string }] }]   // your full section-by-section audit, cleaned up`
       : `        // candid, authors will not see this`
   }
 }`;
@@ -528,6 +530,15 @@ ${REVIEW_ANATOMY}
 ${BASE_RATES}
 
 The authors' own stated limitations (do NOT present these as your discoveries): ${JSON.stringify(p.statedLimitations)}
+
+Evidence-ledger rules:
+- Be skeptical, fair, and specific — do not manufacture criticism or pad the review.
+- Every major issue must have a non-empty, VERBATIM quote from the paper and an anchor. If you cannot verify the evidence, delete the issue or make it an explicitly low-confidence question instead.
+- Label evidenceType honestly: textual for prose, table for a table, figure for a figure or caption, database for a verified external record, inferred only for a clearly marked interpretation, and unverified only when the manuscript cannot establish the point.
+- severity is decision impact, not emotional force: major could change the decision or invalidate a central claim; moderate must be fixed before acceptance; minor is local and non-decisive. Do not label every issue major.
+- confidence is your confidence that the criticism is supported, not how strongly you dislike the paper.
+- whyItMatters must explain the consequence for the paper's claim, validity, contribution, or ethics. revision must be a concrete author action, not "add more detail."
+- Distinguish "absent," "underreported," "unclear," and "insufficient." Search the full manuscript before claiming something is absent.
 ${
   audit
     ? `
@@ -544,7 +555,7 @@ ${formSpec}`,
   // Code-level verification: does each quoted anchor actually appear in the paper?
   const checked: MajorIssue[] = (draft.majorIssues ?? []).map((issue) => ({
     ...issue,
-    quoteVerified: matchableText ? quoteAppearsIn(issue.quote ?? "", matchableText) : undefined,
+    quoteVerified: Boolean(issue.quote?.trim()) && Boolean(matchableText) && quoteAppearsIn(issue.quote ?? "", matchableText),
   }));
   const failedQuotes = checked.filter((i) => i.quoteVerified === false).map((i) => i.title);
 
@@ -563,12 +574,14 @@ Below is YOUR draft review. Fact-check it against the paper, then return the cor
 
 Fact-check rules — re-read the paper for each one:
 1. For every major issue claiming the paper LACKS something ("no effect sizes", "missing X"), verify the paper truly lacks it. If the paper actually has it, DELETE the issue or rewrite it honestly (e.g. "under-emphasized").
-2. These issues cited quotes that do NOT appear verbatim in the paper: ${JSON.stringify(failedQuotes)}. Replace each with a real verbatim quote, or delete the issue if you cannot support it.
+2. These issues cited quotes that do NOT appear verbatim in the paper: ${JSON.stringify(failedQuotes)}. Replace each with a real verbatim quote, or delete the issue if you cannot support it. A major issue without verified evidence must not survive as a confirmed criticism.
 3. Delete any criticism generic enough to fit any paper, and any criticism that merely restates the authors' own limitations: ${JSON.stringify(p.statedLimitations)}.
-4. Check score-text consistency: the recommendation must match the surviving criticisms' weight (${BASE_RATES.split("\n").slice(-1)[0]}). Adjust scores or recommendation if they diverge.
-5. Keep your persona's voice and format. Do not add new issues.${
+4. Check every evidence-ledger field: evidenceType must match the cited source, confidence must match the strength of support, whyItMatters must explain a consequence, and revision must be concrete. Do not use "inferred" to disguise an unsupported claim.
+5. Check severity: reserve major for decision-changing or central-validity threats; downgrade local concerns.
+6. Check score-text consistency: the recommendation must match the surviving criticisms' weight (${BASE_RATES.split("\n").slice(-1)[0]}). Adjust scores or recommendation if they diverge.
+7. Keep your persona's voice and format. Do not add new issues.${
           adversarial
-            ? `\n6. Apply rules 1-3 to EVERY sectionAudit finding as well: delete findings the paper disproves, fix or replace unverifiable quotes, keep severities honest. Return the cleaned sectionAudit in full.`
+            ? `\n8. Apply rules 1-5 to EVERY sectionAudit finding as well: delete findings the paper disproves, fix or replace unverifiable quotes, keep severities and confidence honest, and complete whyItMatters and revision. Return the cleaned sectionAudit in full.`
             : ""
         }
 
@@ -583,14 +596,16 @@ ${formSpec}`,
   // Re-verify quotes on the final version for UI display.
   final.majorIssues = (final.majorIssues ?? []).map((issue) => ({
     ...issue,
-    quoteVerified: matchableText ? quoteAppearsIn(issue.quote ?? "", matchableText) : undefined,
+    quoteVerified: Boolean(issue.quote?.trim()) && Boolean(matchableText) && quoteAppearsIn(issue.quote ?? "", matchableText),
+    factChecked: Boolean(issue.quote?.trim()) && Boolean(matchableText) && quoteAppearsIn(issue.quote ?? "", matchableText),
   }));
   if (adversarial) {
     const cleaned: SectionAudit[] = (final.sectionAudit ?? audit ?? []).map((sec) => ({
       section: sec.section,
       findings: (sec.findings ?? []).map((f) => ({
         ...f,
-        quoteVerified: matchableText ? quoteAppearsIn(f.quote ?? "", matchableText) : undefined,
+        quoteVerified: Boolean(f.quote?.trim()) && Boolean(matchableText) && quoteAppearsIn(f.quote ?? "", matchableText),
+        factChecked: Boolean(f.quote?.trim()) && Boolean(matchableText) && quoteAppearsIn(f.quote ?? "", matchableText),
       })),
     }));
     final.sectionAudit = cleaned.filter((s) => s.findings.length > 0);
