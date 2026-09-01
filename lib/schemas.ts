@@ -3,7 +3,7 @@
 // malformed form. Kept permissive on prose fields, strict on enums/ranges.
 
 import { ACM_CRITERIA, ADR_FLAGS, ADR_REVIEWABILITY, CONTRIBUTION_TYPES, DESK_REJECT_CHECKS } from "./chi2027";
-import { ALL_KEYWORD_NAMES, KEYWORD_RULES, PCS_CONTRIBUTIONS, PCS_DOMAINS, PCS_METHODS, PCS_USERS } from "./keywords";
+import { KEYWORD_RULES } from "./keywords";
 
 const str = { type: "string" } as const;
 const strArr = { type: "array", items: str } as const;
@@ -11,15 +11,16 @@ const score15 = { type: "integer", minimum: 1, maximum: 5 } as const;
 
 const CRITERIA_NAMES = ACM_CRITERIA.map((c) => c.name);
 
-const names = (defs: { name: string }[]) => defs.map((d) => d.name);
-
 const PCS_SCHEMA = {
   type: "object",
   properties: {
-    domain: { type: "array", items: { type: "string", enum: names(PCS_DOMAINS) }, minItems: KEYWORD_RULES.domain.min, maxItems: KEYWORD_RULES.domain.max },
-    method: { type: "array", items: { type: "string", enum: names(PCS_METHODS) }, minItems: KEYWORD_RULES.method.min, maxItems: KEYWORD_RULES.method.max },
-    users: { type: "array", items: { type: "string", enum: names(PCS_USERS) }, maxItems: KEYWORD_RULES.users.max },
-    contribution: { type: "string", enum: names(PCS_CONTRIBUTIONS) },
+    // The full PCS taxonomy is supplied in the prompt and canonicalized in
+    // matching.ts. Keeping 120 long domain names in responseJsonSchema makes
+    // Gemini reject the request with a generic INVALID_ARGUMENT error.
+    domain: { type: "array", items: str, minItems: KEYWORD_RULES.domain.min, maxItems: KEYWORD_RULES.domain.max },
+    method: { type: "array", items: str, minItems: KEYWORD_RULES.method.min, maxItems: KEYWORD_RULES.method.max },
+    users: { type: "array", items: str, maxItems: KEYWORD_RULES.users.max },
+    contribution: str,
   },
   required: ["domain", "method", "users", "contribution"],
 };
@@ -177,7 +178,9 @@ export const PERSONAS_SCHEMA = {
             items: {
               type: "object",
               properties: {
-                tag: { type: "string", enum: ALL_KEYWORD_NAMES },
+                // The full taxonomy is in the prompt; normalizeExpertise()
+                // validates and canonicalizes the returned tag in code.
+                tag: str,
                 level: { type: "integer", minimum: 1, maximum: 4 },
               },
               required: ["tag", "level"],

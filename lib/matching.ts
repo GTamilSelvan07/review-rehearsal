@@ -12,7 +12,7 @@ export function normalizePcs(raw: Partial<PcsKeywords> | undefined): PcsKeywords
     const arr = Array.isArray(list) ? (list as unknown[]).map(String) : [];
     const out: string[] = [];
     for (const s of arr) {
-      const c = canonicalTag(s, group) ?? s.trim();
+      const c = canonicalTag(s, group);
       if (c && !out.includes(c)) out.push(c);
     }
     return out.slice(0, KEYWORD_RULES[group].max);
@@ -22,7 +22,7 @@ export function normalizePcs(raw: Partial<PcsKeywords> | undefined): PcsKeywords
     domain: fix(raw?.domain, "domain"),
     method: fix(raw?.method, "method"),
     users: fix(raw?.users, "users"),
-    contribution: canonicalTag(contributionRaw, "contribution") ?? contributionRaw.trim(),
+    contribution: canonicalTag(contributionRaw, "contribution") ?? "",
   };
 }
 

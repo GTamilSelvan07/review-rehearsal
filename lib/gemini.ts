@@ -125,7 +125,11 @@ export async function genText(opts: GenOpts): Promise<string> {
         useThinking = false;
         continue;
       }
-      if (/(json_?schema|response_?json|schema)/i.test(msg) && useSchema && opts.jsonSchema) {
+      // Gemini often reports an invalid response schema only as the generic
+      // INVALID_ARGUMENT message, without mentioning schema at all. Retry once
+      // without structured-output enforcement so prompt + application-level
+      // canonicalization can still provide a useful result.
+      if (/(json_?schema|response_?json|schema|invalid_?argument|invalid argument)/i.test(msg) && useSchema && opts.jsonSchema) {
         useSchema = false; // fall back to prompt-described JSON
         continue;
       }
